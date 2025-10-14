@@ -1,0 +1,175 @@
+# Training configurations for different scenarios
+
+# Colab T4 GPU Configuration - Sanity Test
+colab_config:
+  # Model
+  model_type: 'torchvision'
+  pretrained: false
+  compile_model: false
+  num_classes: 1000
+  
+  # Data
+  data_subset: 'tiny'  # 1000 samples
+  batch_size: 64
+  image_size: 224
+  num_workers: 2
+  use_hf: true
+  
+  # Training
+  epochs: 3
+  lr: 0.01
+  weight_decay: 1e-4
+  momentum: 0.9
+  optimizer: 'sgd'
+  
+  # Composer algorithms (limited for stability)
+  use_mixup: true
+  use_cutmix: false
+  use_randaugment: false
+  use_label_smoothing: true
+  use_ema: false
+  use_channels_last: true
+  use_blurpool: false
+  use_sam: false
+  use_swa: false
+  
+  # Infrastructure
+  device: 'auto'
+  precision: 'amp_fp16'
+  grad_clip_norm: 1.0
+  
+  # Logging
+  wandb_project: 'mosaic-resnet50-colab'
+  log_interval: '10ba'
+
+# AWS g4dn.xlarge Configuration - Full Training
+aws_g4dn_config:
+  # Model
+  model_type: 'torchvision'
+  pretrained: false
+  compile_model: true
+  num_classes: 1000
+  
+  # Data
+  data_subset: 'full'
+  batch_size: 512  # Optimized for g4dn.xlarge (16GB GPU memory)
+  image_size: 224
+  num_workers: 16
+  use_hf: true
+  
+  # Training
+  epochs: 90
+  lr: 0.1  # Will be found using LR finder
+  weight_decay: 1e-4
+  momentum: 0.9
+  optimizer: 'sgd'
+  
+  # Composer algorithms (full suite for accuracy)
+  use_mixup: true
+  use_cutmix: true
+  use_randaugment: true
+  use_label_smoothing: true
+  use_ema: true
+  use_channels_last: true
+  use_blurpool: true
+  use_sam: false  # Can be enabled for final accuracy boost
+  use_swa: true
+  
+  # Infrastructure
+  device: 'auto'
+  precision: 'amp_fp16'
+  grad_clip_norm: 1.0
+  save_folder: './checkpoints'
+  save_interval: '5ep'
+  
+  # Logging
+  wandb_project: 'mosaic-resnet50-aws'
+  log_interval: '100ba'
+
+# AWS g4dn.2xlarge Configuration - Multi-GPU Training
+aws_g4dn_2xl_config:
+  # Model (same as g4dn.xlarge but with multi-GPU support)
+  model_type: 'torchvision'
+  pretrained: false
+  compile_model: true
+  num_classes: 1000
+  
+  # Data (larger batch size for 2 GPUs)
+  data_subset: 'full'
+  batch_size: 768  # Effective batch size across 2 GPUs
+  image_size: 224
+  num_workers: 32
+  use_hf: true
+  
+  # Training
+  epochs: 90
+  lr: 0.15  # Scaled for larger effective batch size
+  weight_decay: 1e-4
+  momentum: 0.9
+  optimizer: 'sgd'
+  
+  # Composer algorithms
+  use_mixup: true
+  use_cutmix: true
+  use_randaugment: true
+  use_label_smoothing: true
+  use_ema: true
+  use_channels_last: true
+  use_blurpool: true
+  use_sam: true   # Enable for maximum accuracy
+  use_swa: true
+  
+  # Infrastructure
+  device: 'auto'
+  precision: 'amp_fp16'
+  grad_clip_norm: 1.0
+  save_folder: './checkpoints'
+  save_interval: '5ep'
+  
+  # Logging
+  wandb_project: 'mosaic-resnet50-aws-multi'
+  log_interval: '100ba'
+
+# Development Configuration - Local Testing
+dev_config:
+  # Model
+  model_type: 'torchvision'
+  pretrained: false
+  compile_model: false
+  num_classes: 1000
+  
+  # Data
+  data_subset: 'small'  # 10k samples
+  batch_size: 128
+  image_size: 224
+  num_workers: 8
+  use_hf: true
+  
+  # Training
+  epochs: 10
+  lr: 0.01
+  weight_decay: 1e-4
+  momentum: 0.9
+  optimizer: 'sgd'
+  
+  # Composer algorithms (subset for testing)
+  use_mixup: true
+  use_cutmix: true
+  use_randaugment: false
+  use_label_smoothing: true
+  use_ema: true
+  use_channels_last: true
+  use_blurpool: false
+  use_sam: false
+  use_swa: false
+  
+  # Infrastructure
+  device: 'auto'
+  precision: 'amp_fp16'
+  grad_clip_norm: 1.0
+  save_folder: './dev_checkpoints'
+  save_interval: '2ep'
+  
+  # Logging
+  wandb_project: 'mosaic-resnet50-dev'
+  log_interval: '50ba'
