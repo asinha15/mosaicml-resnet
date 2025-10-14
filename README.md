@@ -1,14 +1,94 @@
 # MosaicML ResNet50 ImageNet Training
 
-A comprehensive implementation for training ResNet50 on ImageNet-1K using MosaicML Composer with state-of-the-art optimizations. Designed to achieve >78% accuracy on AWS g4dn instances.
+A comprehensive 3-phase implementation for training ResNet50 on ImageNet-1K using MosaicML Composer. Optimized for AWS g4dn instances with efficient ImageNet storage and multi-GPU DDP training.
 
-## 🎯 Project Goals
+## 🎯 Multi-Phase Training Strategy
 
-- **Phase 1**: Colab sanity test with T4 GPU and ImageNet subset
-- **Phase 2**: Full-scale training preparation with Composer optimizations
-- **Phase 3**: AWS g4dn deployment targeting >78% top-1 accuracy
+- **Phase 1**: ✅ Colab sanity test with T4 GPU and CIFAR-10/ImageNet subset
+- **Phase 2**: AWS g4dn.xlarge validation (1 hour, 25K samples, single T4 GPU)
+- **Phase 3**: AWS g4dn.12xlarge production (4x T4 GPUs, full ImageNet, >78% accuracy)
 
-## 🚀 Quick Start
+## 📊 ImageNet-1K Dataset Strategy
+
+### 🏆 Recommended: EBS Snapshot Approach
+
+**Best option for repeated training:** Create EBS snapshot once, reuse across instances.
+
+```bash
+# 1. Initial setup (once): Create 200GB EBS volume + download ImageNet
+./scripts/setup_imagenet.sh setup
+
+# 2. Create reusable snapshot
+./scripts/setup_imagenet.sh snapshot
+# Outputs: snap-abc123def (save this ID!)
+
+# 3. Future instances: Launch with snapshot-based EBS volume
+aws ec2 create-volume --snapshot-id snap-abc123def \
+  --availability-zone us-west-2a --size 200 --volume-type gp3
+
+# 4. Mount automatically via user-data script
+./scripts/setup_imagenet.sh ebs-only
+```
+
+**Benefits:**
+- ✅ **Fast instance launches**: ~2 minutes vs 30+ minutes download
+- ✅ **Cost effective**: Pay for storage once, reuse unlimited times  
+- ✅ **No network dependency**: Data always available locally
+- ✅ **Consistent performance**: gp3 EBS provides predictable I/O
+
+### Alternative Options (Less Recommended)
+
+| Method | Setup Time | Cost/Month | Reliability | Best For |
+|--------|------------|------------|-------------|----------|
+| **EBS Snapshot** | 30 min once | $20-25 | ⭐⭐⭐⭐⭐ | **Recommended** |
+| S3 Copy | ~15 min/run | $15-20 + transfer | ⭐⭐⭐⭐ | Occasional use |
+| HuggingFace Direct | ~30 min/run | Transfer only | ⭐⭐⭐ | Testing only |
+
+## 🚀 Quick Start Guide
+
+### Phase 1: Colab Validation ✅
+
+```bash
+# Already working - run colab_sanity_test.ipynb
+# Tests: PyTorch, Composer, data loading, T4 GPU compatibility
+```
+
+### Phase 2: AWS Single GPU Validation (1 Hour)
+
+```bash
+# 1. Launch g4dn.xlarge instance
+# 2. Setup instance and ImageNet
+curl -sL https://your-repo/scripts/aws_setup.sh | bash
+./scripts/setup_imagenet.sh setup
+
+# 3. Run 1-hour validation training
+./train_phase2.sh
+```
+
+**Expected Results:**
+- Runtime: ~1 hour
+- Dataset: 25K samples (~2% ImageNet)  
+- Accuracy: ~40-50% (subset validation)
+- Cost: ~$0.50 (1 hour g4dn.xlarge)
+
+### Phase 3: AWS Multi-GPU Production (>78% Accuracy)
+
+```bash
+# 1. Launch g4dn.12xlarge instance with snapshot-based EBS volume
+# 2. Setup instance (ImageNet already available)
+curl -sL https://your-repo/scripts/aws_setup.sh | bash
+./scripts/setup_imagenet.sh ebs-only  # Just mount existing data
+
+# 3. Run full production training
+./train_phase3.sh
+```
+
+**Expected Results:**
+- Runtime: 12-16 hours
+- Dataset: Full ImageNet-1K (1.2M images)
+- Accuracy: >78% top-1 (target)
+- Hardware: 4x T4 GPUs with DDP
+- Cost: ~$60-80 (16 hours g4dn.12xlarge)
 
 ### Google Colab (Sanity Test)
 
@@ -145,58 +225,82 @@ algorithms = [
 
 ## 🔧 Configuration Management
 
-### Pre-defined Configurations
+### Multi-Phase Configurations
 
-- **`colab_config`**: T4 GPU, small subset, 3 epochs
-- **`dev_config`**: Local development, 10k samples
-- **`aws_g4dn_config`**: Production training, full dataset
-- **`aws_g4dn_2xl_config`**: Multi-GPU training
+- **`colab_config`**: ✅ T4 GPU, CIFAR-10/tiny subset, 3 epochs  
+- **`aws_g4dn_validation_config`**: Single T4, 25K samples, 10 epochs, 1 hour
+- **`aws_g4dn_12xl_ddp_config`**: 4x T4 DDP, full ImageNet, 90 epochs, >78% target
+- **`dev_config`**: Local development, 10K samples
 
-### Configuration Files
+### ImageNet Storage Configurations
+
+```yaml
+# Phase 2 & 3: Use pre-downloaded ImageNet
+use_hf: false
+imagenet_path: '/opt/imagenet'
+
+# Development: Use HuggingFace streaming  
+use_hf: true
+data_subset: 'small'
+```
 
 See [`configs/training_configs.yaml`](configs/training_configs.yaml) for detailed settings.
 
-## 📈 Expected Performance
+## 📈 Performance Expectations
 
-### Accuracy Targets
+### Phase 2: Validation Results (g4dn.xlarge)
 
-| Configuration | Hardware | Dataset Size | Expected Top-1 | Training Time |
-|---------------|----------|--------------|-----------------|---------------|
-| Colab Test | T4 | 1K samples | ~5-10% | 10 minutes |
-| Development | Local GPU | 10K samples | ~15-25% | 1 hour |
-| AWS g4dn.xlarge | V100/A10G | Full ImageNet | **>78%** | 12-16 hours |
-| AWS g4dn.2xlarge | 2x GPU | Full ImageNet | **>79%** | 6-8 hours |
+| Metric | Value | Notes |
+|--------|-------|-------|
+| **Runtime** | ~1 hour | Target validation time |
+| **Dataset** | 25K samples | ~2% of ImageNet |
+| **Batch Size** | 256 | Single T4 GPU optimized |
+| **Accuracy** | ~40-50% | Subset validation benchmark |
+| **Cost** | ~$0.50 | 1 hour g4dn.xlarge |
 
-### Memory Requirements
+### Phase 3: Production Results (g4dn.12xlarge)
 
-- **Colab T4 (16GB)**: Batch size 64, works reliably
-- **AWS g4dn.xlarge (16GB)**: Batch size 512 with mixed precision
-- **Local GPU (8GB)**: Batch size 128-256 depending on model
+| Metric | Target | Configuration |
+|--------|--------|---------------|
+| **Accuracy** | **>78%** | Full ImageNet training |
+| **Runtime** | 12-16 hours | 4x T4 GPU with DDP |
+| **Throughput** | ~2000 samples/sec | Across 4 GPUs |
+| **Memory** | ~14GB/GPU | With mixed precision |
+| **Cost** | ~$60-80 | Full production run |
 
-## 🛠 Development Workflow
+## 💡 AWS Infrastructure Best Practices
 
-### Phase 1: Colab Sanity Test ✅
+### Instance Selection
 
-- [x] Basic setup and dependencies
-- [x] HuggingFace dataset integration
-- [x] Composer model implementation
-- [x] T4 GPU memory optimization
-- [x] Quick training validation
+| Phase | Instance | GPUs | Memory | Use Case | Hourly Cost |
+|-------|----------|------|--------|----------|-------------|
+| Phase 2 | g4dn.xlarge | 1x T4 | 64GB | Validation | ~$0.50 |
+| Phase 3 | g4dn.12xlarge | 4x T4 | 192GB | Production | ~$3.90 |
 
-### Phase 2: Full Training Setup
+### EBS Volume Strategy
 
-- [ ] Learning rate finder integration
-- [ ] Advanced Composer algorithms
-- [ ] Checkpointing and resuming
-- [ ] Comprehensive logging
-- [ ] AWS deployment scripts
+```bash
+# Recommended setup for repeated training
+1. Create 200GB gp3 EBS volume (better price/performance than gp2)
+2. Download ImageNet once: ./scripts/setup_imagenet.sh setup  
+3. Create snapshot: ./scripts/setup_imagenet.sh snapshot
+4. Future launches: Create volumes from snapshot (2 min vs 30 min)
+```
 
-### Phase 3: Production Optimization
+**Cost Comparison (Monthly):**
+- EBS gp3 200GB: ~$20/month
+- Repeated HF downloads: $30-50+/month in transfer costs
+- **Savings**: ~50%+ for multiple training runs
 
-- [ ] Multi-GPU support (if using g4dn.2xlarge)
-- [ ] Hyperparameter optimization
-- [ ] >78% accuracy validation
-- [ ] Cost optimization analysis
+### Multi-GPU DDP Configuration  
+
+```python
+# Composer handles DDP automatically
+ddp_enabled: true
+num_gpus: 4
+batch_size: 128  # Per GPU (128 × 4 = 512 effective)
+lr: 0.4         # Scaled for larger batch size (0.1 × 4)
+```
 
 ## 📚 Usage Examples
 

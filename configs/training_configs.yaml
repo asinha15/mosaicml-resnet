@@ -1,6 +1,6 @@
 # Training configurations for different scenarios
 
-# Colab T4 GPU Configuration - Sanity Test
+# Phase 1: Colab T4 GPU Configuration - Sanity Test (Working ✅)
 colab_config:
   # Model
   model_type: 'torchvision'
@@ -42,29 +42,30 @@ colab_config:
   wandb_project: 'mosaic-resnet50-colab'
   log_interval: '10ba'
 
-# AWS g4dn.xlarge Configuration - Full Training
-aws_g4dn_config:
+# Phase 2: AWS g4dn.xlarge Configuration - 1 Hour Validation Test
+aws_g4dn_validation_config:
   # Model
   model_type: 'torchvision'
   pretrained: false
   compile_model: true
   num_classes: 1000
   
-  # Data
-  data_subset: 'full'
-  batch_size: 512  # Optimized for g4dn.xlarge (16GB GPU memory)
+  # Data - Small subset for 1-hour validation
+  data_subset: 25000  # 25K samples (~2% of ImageNet)
+  batch_size: 256     # Optimized for single T4 GPU (16GB)
   image_size: 224
-  num_workers: 16
-  use_hf: true
+  num_workers: 8
+  use_hf: false       # Use pre-downloaded ImageNet from EBS/S3
+  imagenet_path: '/opt/imagenet'  # Mount point for ImageNet data
   
-  # Training
-  epochs: 90
-  lr: 0.1  # Will be found using LR finder
+  # Training - Target 1 hour runtime
+  epochs: 10          # Quick validation epochs
+  lr: 0.05           # Moderate learning rate
   weight_decay: 1e-4
   momentum: 0.9
   optimizer: 'sgd'
   
-  # Composer algorithms (full suite for accuracy)
+  # Composer algorithms (moderate set for validation)
   use_mixup: true
   use_cutmix: true
   use_randaugment: true
@@ -72,43 +73,54 @@ aws_g4dn_config:
   use_ema: true
   use_channels_last: true
   use_blurpool: true
-  use_sam: false  # Can be enabled for final accuracy boost
-  use_swa: true
+  use_sam: false     # Skip for faster training
+  use_swa: false     # Skip for faster training
   
   # Infrastructure
   device: 'auto'
   precision: 'amp_fp16'
   grad_clip_norm: 1.0
-  save_folder: './checkpoints'
-  save_interval: '5ep'
+  save_folder: '/opt/checkpoints'
+  save_interval: '2ep'
   
   # Logging
-  wandb_project: 'mosaic-resnet50-aws'
-  log_interval: '100ba'
+  wandb_project: 'mosaic-resnet50-phase2-validation'
+  log_interval: '50ba'
 
-# AWS g4dn.2xlarge Configuration - Multi-GPU Training
-aws_g4dn_2xl_config:
-  # Model (same as g4dn.xlarge but with multi-GPU support)
+# Phase 3: AWS g4dn.12xlarge Configuration - Full Training with 4x T4 GPUs
+aws_g4dn_12xl_ddp_config:
+  # Model
   model_type: 'torchvision'
   pretrained: false
   compile_model: true
   num_classes: 1000
   
-  # Data (larger batch size for 2 GPUs)
+  # Data - Full ImageNet-1K
   data_subset: 'full'
-  batch_size: 768  # Effective batch size across 2 GPUs
+  batch_size: 128     # Per GPU batch size (128 x 4 = 512 effective)
   image_size: 224
-  num_workers: 32
-  use_hf: true
+  num_workers: 16     # 4 workers per GPU
+  use_hf: false       # Use pre-downloaded ImageNet
+  imagenet_path: '/opt/imagenet'
   
-  # Training
+  # Multi-GPU DDP Configuration
+  ddp_enabled: true
+  num_gpus: 4
+  gradient_accumulation: 1
+  find_unused_parameters: false
+  
+  # Training - Full 90 epoch schedule
   epochs: 90
-  lr: 0.15  # Scaled for larger effective batch size
+  lr: 0.4            # Scaled for 4 GPUs (0.1 * 4)
   weight_decay: 1e-4
   momentum: 0.9
   optimizer: 'sgd'
   
-  # Composer algorithms
+  # Advanced LR Schedule
+  warmup_epochs: 5
+  cosine_restarts: false
+  
+  # Composer algorithms (full suite for maximum accuracy)
   use_mixup: true
   use_cutmix: true
   use_randaugment: true
@@ -116,19 +128,24 @@ aws_g4dn_2xl_config:
   use_ema: true
   use_channels_last: true
   use_blurpool: true
-  use_sam: true   # Enable for maximum accuracy
-  use_swa: true
+  use_sam: true      # Enable for final accuracy push
+  use_swa: true      # Weight averaging for final boost
   
   # Infrastructure
   device: 'auto'
   precision: 'amp_fp16'
   grad_clip_norm: 1.0
-  save_folder: './checkpoints'
+  save_folder: '/opt/checkpoints'
   save_interval: '5ep'
   
-  # Logging
-  wandb_project: 'mosaic-resnet50-aws-multi'
+  # Logging & Monitoring  
+  wandb_project: 'mosaic-resnet50-phase3-production'
   log_interval: '100ba'
+  eval_interval: '1ep'
+  
+  # Target Performance
+  target_accuracy: 0.78    # >78% top-1 accuracy
+  early_stopping_patience: 10
 
 # Development Configuration - Local Testing
 dev_config:
