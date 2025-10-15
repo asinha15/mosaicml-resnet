@@ -1,301 +1,282 @@
-# Multi-Phase ResNet50 Deployment Guide
+# AWS Deployment Guide - New Optimized Strategy
 
-Complete deployment guide for the 3-phase ResNet50 ImageNet training on AWS.
+## 🎯 3-Phase Strategy (Reliable & Cost-Effective)
 
-## 🎯 Phase Overview
+### **Phase 1: Fast Dataset Download (c5n.xlarge)**
+- **Instance**: c5n.xlarge (network-optimized, on-demand)
+- **Purpose**: Download ImageNet-1k quickly and reliably  
+- **Cost**: ~$0.30/hr × 1hr = $0.30 total
+- **Network**: Up to 25 Gbps for fast downloads
+- **Why**: Avoid conda issues, reliable downloads, create reusable EBS snapshot
 
-| Phase | Objective | Hardware | Time | Cost | Purpose |
-|-------|-----------|----------|------|------|---------|
-| **Phase 1** | ✅ Pipeline validation | Colab T4 | 10 min | Free | Ensure everything works |
-| **Phase 2** | Infrastructure validation | g4dn.xlarge | 1 hour | ~$0.50 | Validate AWS setup |
-| **Phase 3** | Production training | g4dn.12xlarge | 16 hours | ~$65 | Achieve >78% accuracy |
+### **Phase 2: Validation Training (g4dn.xlarge spot)**
+- **Instance**: g4dn.xlarge (spot pricing)
+- **Purpose**: Quick validation with subset
+- **Cost**: ~$0.20/hr × 1hr = $0.20 total
+- **Setup**: Pip-based (no conda complexity)
 
-## 📊 Phase 2: AWS Single GPU Validation
+### **Phase 3: Full Training (g4dn.12xlarge spot)**
+- **Instance**: g4dn.12xlarge (spot pricing)
+- **Purpose**: Full ImageNet training
+- **Cost**: ~$1.20/hr × 24hr = $29 total
+- **Setup**: Multi-GPU with existing dataset
+
+---
+
+## Phase 1: Dataset Download
+
+> 💡 **Why separate download?** 
+> - ✅ **Reliability**: On-demand instances won't get interrupted
+> - ✅ **Speed**: c5n instances have 25 Gbps network performance  
+> - ✅ **Cost**: Download once, use many times
+> - ✅ **No conda issues**: Pure pip-based setup
+> - ✅ **Reusable**: Create EBS snapshot for future use
 
 ### Prerequisites
-
-- AWS account with EC2 access
-- **HuggingFace account with ImageNet-1k access** (required!)
-- **HuggingFace token** with read access
-- Basic familiarity with AWS console
-- SSH key pair configured
-
 > ⚠️ **Important**: ImageNet-1k on HuggingFace requires approval. 
 > 1. Request access at: https://huggingface.co/datasets/imagenet-1k
 > 2. Create token at: https://huggingface.co/settings/tokens (with read access)
-> 3. Save your token - you'll need it for Phase 2 setup
+> 3. Save your token - you'll need it for download
 
-### Step 1: Launch Instance
+### Step 1: Launch Download Instance
+
+**Recommended Instance: c5n.xlarge**
+- **vCPUs**: 4
+- **Memory**: 10.5 GB  
+- **Network**: Up to 25 Gbps
+- **Cost**: ~$0.216/hour
 
 ```bash
-# Launch g4dn.xlarge instance with user-data for automatic setup
+# Launch c5n.xlarge for fast dataset download (on-demand for reliability)
 aws ec2 run-instances \
-  --image-id ami-0c02fb55956c7d316 \  # Deep Learning AMI (Ubuntu)
-  --instance-type g4dn.xlarge \
-  --key-name your-key-pair \
-  --security-group-ids sg-your-security-group \
-  --subnet-id subnet-your-subnet \
+  --image-id ami-0ac1f653c5b6af751 \
+  --instance-type c5n.xlarge \
+  --key-name aws-kp-lvboy \
+  --security-group-ids sg-1c81e178 \
+  --subnet-id subnet-4e67cc65 \
   --block-device-mappings '[{
     "DeviceName": "/dev/sda1",
-    "Ebs": {"VolumeSize": 100, "VolumeType": "gp3"}
+    "Ebs": {"VolumeSize": 50, "VolumeType": "gp3"}
   }, {
     "DeviceName": "/dev/sdf", 
     "Ebs": {"VolumeSize": 200, "VolumeType": "gp3"}
   }]' \
-  --user-data file://scripts/user-data-phase2.sh \
-  --tag-specifications 'ResourceType=instance,Tags=[{Key=Name,Value=resnet50-phase2},{Key=Project,Value=mosaic-resnet50}]'
+  --user-data file://scripts/user-data-download.sh \
+  --tag-specifications 'ResourceType=instance,Tags=[{Key=Name,Value=imagenet-download},{Key=Project,Value=mosaic-resnet50}]' \
+  --region us-east-1 \
+  --profile personal
 ```
 
-> 📝 **What user-data-phase2.sh does:**
-> - Installs system dependencies (git, htop, nvtop)  
-> - Sets up Miniconda with Python 3.10
-> - Installs PyTorch + MosaicML Composer
-> - Creates project directories
-> - Prepares environment for ImageNet download
+> 📝 **What user-data-download.sh does:**
+> - Installs Python 3 + pip (no conda complexity)
+> - Sets up HuggingFace datasets library
+> - Creates optimized download scripts  
+> - Prepares EBS snapshot creation tools
+> - Mounts 200GB EBS volume for dataset storage
 
-### Step 2: Instance Setup
-
-SSH into your instance:
+### Step 2: Download Dataset
 
 ```bash
-ssh -i your-key.pem ubuntu@your-instance-ip
+# SSH into download instance
+INSTANCE_IP=$(aws ec2 describe-instances \
+  --filters "Name=tag:Name,Values=imagenet-download" "Name=instance-state-name,Values=running" \
+  --query 'Reservations[0].Instances[0].PublicIpAddress' \
+  --output text --region us-east-1 --profile personal)
 
-# Run setup script (automatically detects g4dn.xlarge)
-curl -sL https://raw.githubusercontent.com/yourrepo/mosaic-resnet/main/scripts/aws_setup.sh | bash
+ssh -i your-key.pem ubuntu@$INSTANCE_IP
 
-# Setup ImageNet dataset with your HuggingFace token
-export HUGGINGFACE_TOKEN="hf_your_token_here"  # Replace with your actual token
-./scripts/setup_imagenet.sh setup
+# Set your HuggingFace token
+export HUGGINGFACE_TOKEN='your_token_here'
 
-# Alternative: Script will prompt for token if not set
-# ./scripts/setup_imagenet.sh setup
+# Start download (estimated 30-60 minutes on c5n.xlarge)
+./download_imagenet.sh
+
+# Monitor progress
+tail -f /var/log/user-data.log
 ```
 
-> 💡 **Token Security**: The script can save your token securely for reuse, or you can set it as an environment variable each time.
-
-### Step 3: Run Phase 2 Training
+### Step 3: Create EBS Snapshot
 
 ```bash
-# Activate environment
-conda activate resnet50
+# After download completes, create snapshot for reuse
+./create_snapshot.sh
 
-# Configure W&B (optional but recommended)
-wandb login
-
-# Run 1-hour validation training
-./train_phase2.sh
+# Note the snapshot ID for Phase 2/3
+# Example output: snap-0123456789abcdef0
 ```
 
-### Step 4: Validation Results
-
-Expected output after ~1 hour:
+### Step 4: Terminate Download Instance
+```bash
+# After snapshot creation, terminate to save costs
+aws ec2 terminate-instances \
+  --instance-ids $(aws ec2 describe-instances \
+    --filters "Name=tag:Name,Values=imagenet-download" \
+    --query 'Reservations[0].Instances[0].InstanceId' \
+    --output text --region us-east-1 --profile personal) \
+  --region us-east-1 --profile personal
 ```
-Phase 2 Validation Results:
-- Dataset: 25,000 ImageNet samples
-- Final accuracy: ~40-50% (normal for subset)
-- Training speed: ~800-1000 samples/sec
-- GPU memory: ~12-14GB used
-- Total time: ~55-65 minutes
-```
 
-### Step 5: Create EBS Snapshot
+---
+
+## Phase 2: Validation Training
+
+### Step 1: Launch Training Instance
 
 ```bash
-# Create snapshot for Phase 3 reuse
-./scripts/setup_imagenet.sh snapshot
-
-# Output will be snapshot ID like: snap-abc123def456
-# SAVE THIS ID for Phase 3!
-```
-
-## 🚀 Phase 3: AWS Multi-GPU Production
-
-### Prerequisites
-
-- Successful Phase 2 completion
-- EBS snapshot ID from Phase 2
-- Budget approval for ~$65 training run
-
-### Step 1: Launch Production Instance
-
-```bash
-# Create EBS volume from Phase 2 snapshot
-SNAPSHOT_ID="snap-abc123def456"  # From Phase 2
+# Create EBS volume from Phase 1 snapshot
+SNAPSHOT_ID="snap-08af26be1b5312b42"  # From Phase 1
 VOLUME_ID=$(aws ec2 create-volume \
   --snapshot-id $SNAPSHOT_ID \
-  --availability-zone us-west-2a \
+  --availability-zone us-east-1a \
   --size 200 \
   --volume-type gp3 \
+  --region us-east-1 \
+  --profile personal \
   --query "VolumeId" --output text)
 
-# Launch g4dn.12xlarge with existing ImageNet volume
+# Launch g4dn.xlarge SPOT instance for validation
 aws ec2 run-instances \
-  --image-id ami-0c02fb55956c7d316 \
-  --instance-type g4dn.12xlarge \
-  --key-name your-key-pair \
-  --security-group-ids sg-your-security-group \
-  --subnet-id subnet-your-subnet \
-  --user-data file://user-data-phase3.sh
+  --image-id ami-0ac1f653c5b6af751 \
+  --instance-type g4dn.xlarge \
+  --key-name aws-kp-lvboy \
+  --security-group-ids sg-1c81e178 \
+  --subnet-id subnet-4e67cc65 \
+  --instance-market-options '{
+    "MarketType": "spot",
+    "SpotOptions": {
+      "MaxPrice": "0.50",
+      "SpotInstanceType": "one-time",
+      "InstanceInterruptionBehavior": "terminate"
+    }
+  }' \
+  --block-device-mappings '[{
+    "DeviceName": "/dev/sda1",
+    "Ebs": {"VolumeSize": 100, "VolumeType": "gp3"}
+  }]' \
+  --user-data file://scripts/user-data-training.sh \
+  --tag-specifications 'ResourceType=instance,Tags=[{Key=Name,Value=resnet50-validation},{Key=Project,Value=mosaic-resnet50}]' \
+  --region us-east-1 \
+  --profile personal
+```
+
+### Step 2: Attach ImageNet Volume
+
+```bash
+# Get instance ID
+INSTANCE_ID=$(aws ec2 describe-instances \
+  --filters "Name=tag:Name,Values=resnet50-validation" "Name=instance-state-name,Values=running" \
+  --query 'Reservations[0].Instances[0].InstanceId' \
+  --output text --region us-east-1 --profile personal)
 
 # Attach ImageNet volume
 aws ec2 attach-volume \
   --volume-id $VOLUME_ID \
   --instance-id $INSTANCE_ID \
-  --device /dev/sdf
+  --device /dev/sdf \
+  --region us-east-1 \
+  --profile personal
 ```
 
-### Step 2: Production Setup
+### Step 3: Start Validation Training
 
 ```bash
-ssh -i your-key.pem ubuntu@your-instance-ip
+# SSH into training instance
+INSTANCE_IP=$(aws ec2 describe-instances \
+  --filters "Name=tag:Name,Values=resnet50-validation" \
+  --query 'Reservations[0].Instances[0].PublicIpAddress' \
+  --output text --region us-east-1 --profile personal)
 
-# Run setup (detects g4dn.12xlarge automatically)
-curl -sL https://raw.githubusercontent.com/yourrepo/mosaic-resnet/main/scripts/aws_setup.sh | bash
+ssh -i your-key.pem ubuntu@$INSTANCE_IP
 
-# Mount existing ImageNet data
-./scripts/setup_imagenet.sh ebs-only
+# Mount ImageNet volume
+sudo mkdir -p /mnt/imagenet-data
+sudo mount /dev/nvme1n1 /mnt/imagenet-data
 
-# Verify 4 GPUs detected
-nvidia-smi
-python -c "import torch; print(f'GPUs: {torch.cuda.device_count()}')"
+# Activate training environment
+source activate_env.sh
+
+# Start validation training (subset)
+./start_training.sh
 ```
-
-### Step 3: Run Production Training
-
-```bash
-# Activate environment  
-conda activate resnet50
-
-# Configure W&B with production project
-wandb login
-
-# Start full ImageNet training with DDP
-./train_phase3.sh
-
-# Monitor progress (in separate terminal)
-tail -f /opt/checkpoints/train.log
-watch -n 10 nvidia-smi
-```
-
-### Step 4: Monitor Training Progress
-
-Key metrics to watch:
-
-```bash
-# Training progress (should show 4 GPU utilization)
-nvidia-smi
-
-# W&B dashboard metrics:
-- Training loss: Should decrease steadily
-- Validation accuracy: Target >78% by epoch 90
-- GPU memory: ~14GB per GPU
-- Training speed: ~2000+ samples/sec total
-
-# Estimated timeline:
-- Hours 0-2: Initial epochs, accuracy ~5-15%
-- Hours 4-8: Mid training, accuracy ~40-60% 
-- Hours 12-16: Final epochs, accuracy >75%
-```
-
-### Step 5: Production Results
-
-Expected final results:
-```
-Phase 3 Production Results:
-- Dataset: 1,281,167 ImageNet training samples
-- Final top-1 accuracy: >78% (target achieved)
-- Final top-5 accuracy: >94% (typical)
-- Total training time: 12-16 hours
-- Peak throughput: ~2000+ samples/sec
-- Total cost: ~$60-80
-```
-
-## 💰 Cost Optimization
-
-### Phase 2 Cost Breakdown
-- g4dn.xlarge: $0.526/hour × 1 hour = ~$0.53
-- EBS storage: $0.10/GB × 200GB × 1 day = ~$0.66
-- **Total Phase 2: ~$1.20**
-
-### Phase 3 Cost Breakdown  
-- g4dn.12xlarge: $4.277/hour × 16 hours = ~$68
-- EBS storage: Already created in Phase 2
-- **Total Phase 3: ~$68**
-
-### Cost Optimization Tips
-
-1. **Use Spot Instances**: 50-70% savings
-   ```bash
-   aws ec2 request-spot-instances --spot-price "2.50" --instance-count 1 --type "one-time" --launch-specification file://spot-spec.json
-   ```
-
-2. **Automatic Termination**: Set CloudWatch alarm
-   ```bash
-   # Auto-terminate after training completes
-   aws cloudwatch put-metric-alarm --alarm-name "terminate-after-training" --alarm-actions "arn:aws:automate:region:account:ec2:terminate"
-   ```
-
-3. **EBS Snapshot Cleanup**: Delete old snapshots
-   ```bash
-   # Keep only latest snapshot
-   aws ec2 describe-snapshots --owner-ids self --query 'Snapshots[?Description==`ImageNet-1K*`]'
-   ```
-
-## 🔍 Troubleshooting
-
-### Common Phase 2 Issues
-
-| Issue | Symptom | Solution |
-|-------|---------|----------|
-| ImageNet download fails | `trust_remote_code` error | Use updated scripts (fixed) |
-| GPU not detected | CPU training | Check Deep Learning AMI |
-| OOM errors | Training crashes | Reduce batch size to 128 |
-
-### Common Phase 3 Issues
-
-| Issue | Symptom | Solution |
-|-------|---------|----------|
-| Only 1 GPU used | Low throughput | Verify DDP config |
-| Network bottleneck | Slow data loading | Use local EBS, not S3 |
-| Training diverges | Loss increases | Lower learning rate |
-
-### Debug Commands
-
-```bash
-# Check GPU utilization
-nvidia-smi -l 1
-
-# Check training logs
-tail -f /opt/checkpoints/$(ls -t /opt/checkpoints/ | head -1)/train.log
-
-# Check disk I/O
-iostat -x 1
-
-# Check network usage (should be minimal with local data)
-iftop -i eth0
-```
-
-## ✅ Success Criteria
-
-### Phase 2 Success
-- [ ] Training completes in ~1 hour
-- [ ] No CUDA/GPU errors
-- [ ] Achieves ~40-50% accuracy on subset
-- [ ] EBS snapshot created successfully
-
-### Phase 3 Success  
-- [ ] All 4 GPUs utilized (nvidia-smi shows >80% utilization)
-- [ ] Training speed >1500 samples/sec total
-- [ ] **Final top-1 accuracy >78%**
-- [ ] No memory or stability issues
-
-## 📋 Next Steps After Success
-
-1. **Model Deployment**: Export to ONNX/TorchScript for inference
-2. **Hyperparameter Tuning**: Try different optimizers, schedules
-3. **Architecture Experiments**: Test other models (EfficientNet, Vision Transformer)
-4. **Production Pipeline**: Set up automated training/evaluation
 
 ---
 
-🎉 **Congratulations!** You've successfully trained a >78% accuracy ResNet50 on ImageNet using MosaicML Composer with multi-GPU DDP on AWS!
+## Phase 3: Full Production Training
+
+### Step 1: Launch Production Instance
+
+```bash
+# Launch g4dn.12xlarge SPOT instance for full training
+aws ec2 run-instances \
+  --image-id ami-0ac1f653c5b6af751 \
+  --instance-type g4dn.12xlarge \
+  --key-name aws-kp-lvboy \
+  --security-group-ids sg-1c81e178 \
+  --subnet-id subnet-4e67cc65 \
+  --instance-market-options '{
+    "MarketType": "spot",
+    "SpotOptions": {
+      "MaxPrice": "2.00",
+      "SpotInstanceType": "one-time",
+      "InstanceInterruptionBehavior": "terminate"
+    }
+  }' \
+  --user-data file://scripts/user-data-training.sh \
+  --tag-specifications 'ResourceType=instance,Tags=[{Key=Name,Value=resnet50-production},{Key=Project,Value=mosaic-resnet50}]' \
+  --region us-east-1 \
+  --profile personal
+
+# Attach existing ImageNet volume (reuse from Phase 2 or create new from snapshot)
+```
+
+---
+
+## 💡 Key Benefits of New Strategy
+
+### **Reliability**
+- ✅ No conda ToS issues (pure pip)
+- ✅ No package installation failures causing shutdowns
+- ✅ Separate download from training (no interruption risk)
+- ✅ Reusable EBS snapshots
+
+### **Performance**  
+- ✅ c5n.xlarge: 25 Gbps network for fast downloads
+- ✅ Optimized for network-intensive operations
+- ✅ No memory issues during package installation
+
+### **Cost Optimization**
+- ✅ Download: $0.30 total (1 hour c5n.xlarge)
+- ✅ Validation: $0.20 total (1 hour g4dn.xlarge spot)
+- ✅ Full training: ~$29 total (24 hours g4dn.12xlarge spot)
+- ✅ **Total project cost: ~$30** vs $120+ with on-demand
+
+### **Simplicity**
+- ✅ Pure pip installation (no conda complexity)
+- ✅ Python venv (lightweight, reliable)
+- ✅ Clear separation of concerns
+- ✅ Easy to debug and reproduce
+
+---
+
+## 🚀 Quick Start Commands
+
+```bash
+# 1. Download dataset (Phase 1)
+aws ec2 run-instances --instance-type c5n.xlarge --user-data file://scripts/user-data-download.sh ...
+
+# 2. Validation training (Phase 2)  
+aws ec2 run-instances --instance-type g4dn.xlarge --user-data file://scripts/user-data-training.sh ...
+
+# 3. Full training (Phase 3)
+aws ec2 run-instances --instance-type g4dn.12xlarge --user-data file://scripts/user-data-training.sh ...
+```
+
+## 📊 Instance Comparison
+
+| Instance | Type | vCPU | Memory | GPU | Network | Use Case | Cost/hr |
+|----------|------|------|--------|-----|---------|----------|---------|
+| c5n.xlarge | Compute | 4 | 10.5GB | None | 25 Gbps | Download | $0.216 |
+| g4dn.xlarge | GPU | 4 | 16GB | 1×T4 | 25 Gbps | Validation | $0.20 spot |
+| g4dn.12xlarge | GPU | 48 | 192GB | 4×T4 | 50 Gbps | Production | $1.20 spot |
+
+🎯 **Perfect balance of speed, reliability, and cost!**
