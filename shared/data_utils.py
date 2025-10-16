@@ -56,13 +56,27 @@ class ImageNetHF(VisionDataset):
         self._iterator = None
         self._current_idx = 0
         
-        # Check for authentication
-        if not self.token:
+        # Check for offline mode
+        offline_mode = os.environ.get('HF_DATASETS_OFFLINE', '0') == '1'
+        hf_home = os.environ.get('HF_HOME')
+        
+        # Check for authentication (only needed for online mode)
+        if not offline_mode and not self.token:
             print("⚠️  No HuggingFace token provided. ImageNet-1k is a gated dataset.")
             print("💡 Set HF_TOKEN environment variable or pass token parameter")
         
+        # Validate offline mode setup
+        if offline_mode and not hf_home:
+            print("⚠️  HF_DATASETS_OFFLINE=1 but HF_HOME not set")
+            print("💡 Set HF_HOME environment variable to cache directory")
+        
         # Load dataset from HuggingFace with error handling
-        print(f"Loading ImageNet {split} split from HuggingFace...")
+        if offline_mode and hf_home:
+            print(f"Loading ImageNet {split} split from LOCAL HuggingFace cache...")
+            print(f"   📁 Cache location: {hf_home}")
+        else:
+            print(f"Loading ImageNet {split} split from HuggingFace (online)...")
+        
         try:
             if streaming:
                 # Use streaming mode - much faster startup
