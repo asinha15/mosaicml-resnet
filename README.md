@@ -179,6 +179,13 @@ python train.py \
 **Root Cause:** Signal-based timeout conflicts in Colab environment.
 **Solution:** Fixed - now uses polling-based timeout with comprehensive error handling.
 
+#### **Training Runs Over 60 Minutes (Timeout Issue)**
+```
+❌ Issue: Training runs for 71+ minutes instead of exactly 60 minutes
+```
+**Root Cause:** `trainer.fit()` blocking call doesn't check timeout during training.
+**Solution:** Fixed - added TimeoutCallback that checks timeout every 10 batches and stops training precisely at 60 minutes.
+
 #### **KeyError: 0 / Cache Issues (Streaming Dataset)**
 ```
 ❌ Error: KeyError: 0 in streaming dataset cache

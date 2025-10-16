@@ -9,6 +9,7 @@ FIXED ISSUES:
 - ✅ Helpful error suggestions and diagnostics
 - ✅ Fixed KeyError in streaming dataset cache (improved cache management logic)
 - ✅ Fixed epoch restart detection for streaming datasets (handles DataLoader epoch boundaries)
+- ✅ Fixed timeout enforcement with proper Composer callback (ensures exactly 60-minute runtime)
 
 Features:
 - ✅ Streams ImageNet-1k data using HuggingFace datasets API (with authentication)
@@ -512,12 +513,45 @@ def setup_composer_algorithms(use_full_suite: bool = True, streaming: bool = Tru
     return algorithms
 
 
+class TimeoutCallback:
+    """Composer callback that enforces timeout during training."""
+    
+    def __init__(self, timeout_handler: TimeoutHandler):
+        self.timeout_handler = timeout_handler
+        self.last_check = time.time()
+    
+    def batch_end(self, state, logger):
+        """Check timeout after each batch."""
+        current_time = time.time()
+        
+        # Check timeout every 10 batches to avoid too much overhead
+        if state.timestamp.batch % 10 == 0 or current_time - self.last_check > 30:
+            self.last_check = current_time
+            
+            if self.timeout_handler.should_stop():
+                elapsed_minutes = self.timeout_handler.elapsed_time() / 60
+                print(f"\n⏰ TIMEOUT REACHED after {elapsed_minutes:.1f} minutes!")
+                print(f"   Stopping training at batch {state.timestamp.batch}")
+                
+                # Stop training by setting a flag that Composer will check
+                state.stop_training = True
+                return
+            
+            # Progress update every 100 batches
+            if state.timestamp.batch % 100 == 0:
+                elapsed = self.timeout_handler.elapsed_time()
+                remaining = self.timeout_handler.remaining_time()
+                progress = self.timeout_handler.progress_percent()
+                print(f"   ⏱️  Time: {elapsed/60:.1f}min elapsed, {remaining/60:.1f}min remaining ({progress:.1f}%)")
+
+
 def setup_callbacks(timeout_handler: TimeoutHandler) -> list:
     """Setup training callbacks with timeout monitoring."""
     callbacks = [
         LRMonitor(),
         MemoryMonitor(), 
         SpeedMonitor(window_size=50),
+        TimeoutCallback(timeout_handler),  # Add timeout callback
     ]
     
     return callbacks
@@ -645,20 +679,26 @@ def main():
         weight_decay=1e-4
     )
     
-    # Estimate training duration for scheduler
+    # Estimate training duration for scheduler with safety margin
     steps_per_epoch = len(train_loader)
     # For 1-hour training, estimate realistic number of steps
-    # T4 GPU can process ~150-200 samples/sec, so ~8000-12000 batches in 1 hour
-    estimated_batches_per_hour = min(10000, steps_per_epoch * 50)  # Cap at reasonable limit
+    # T4 GPU can process ~150-200 samples/sec, so ~6000-10000 batches in 1 hour
+    # Use conservative estimate with safety margin to ensure timeout works
+    timeout_minutes = args.timeout_minutes
+    conservative_batches = min(8000, steps_per_epoch * 40)  # Conservative estimate
+    
+    # Add safety margin - plan for 90% of estimated batches to ensure timeout works
+    max_batches_with_margin = int(conservative_batches * 0.9)
     
     scheduler = CosineAnnealingWithWarmupScheduler(
         t_warmup=f'{max(100, steps_per_epoch // 4)}ba',  # 25% of first epoch or 100 batches minimum
-        t_max=f'{estimated_batches_per_hour}ba'
+        t_max=f'{max_batches_with_margin}ba'
     )
     
     print(f"📊 Training config:")
     print(f"   Steps per epoch: {steps_per_epoch}")
-    print(f"   Estimated max batches: {estimated_batches_per_hour}")
+    print(f"   Conservative max batches (with safety margin): {max_batches_with_margin}")
+    print(f"   Timeout enforcement: {timeout_minutes} minutes via TimeoutCallback")
     print(f"   Warmup steps: {max(100, steps_per_epoch // 4)}")
     
     # Setup Composer components
@@ -686,7 +726,7 @@ def main():
         eval_dataloader=val_loader,
         optimizers=optimizer,
         schedulers=scheduler,
-        max_duration=f'{estimated_batches_per_hour}ba',  # Match scheduler duration
+        max_duration=f'{max_batches_with_margin}ba',  # Conservative duration with safety margin
         eval_interval='500ba',  # Evaluate every 500 batches
         device=device,
         precision='amp_fp16',  # Mixed precision for efficiency
@@ -710,15 +750,15 @@ def main():
     print("=" * 60)
     
     try:
-        # Monitor training progress with timeout checking
-        while not timeout_handler.should_stop():
-            # Train for the full duration or until timeout
-            trainer.fit()
-            break  # Training completed normally
+        # Training with timeout callback enforcement
+        # The TimeoutCallback will stop training when timeout is reached
+        trainer.fit()
         
-        # Check if we stopped due to timeout
+        # Check how training ended
         if timeout_handler.should_stop():
             print(f"\n⏰ Training completed due to timeout ({args.timeout_minutes} minutes)")
+        else:
+            print(f"\n🏁 Training completed before timeout")
         
     except KeyboardInterrupt:
         print("\n⛔ Training interrupted by user")

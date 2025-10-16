@@ -38,7 +38,7 @@ pip install torch==2.1.0 torchvision==0.16.0 torchaudio==2.1.0 --index-url https
 # Install MosaicML and other packages
 echo "🎼 Installing MosaicML Composer and dependencies..."
 # Use version range to avoid metadata issues with 0.12.0, 0.11.1, 0.11.0
-pip install "mosaicml>=0.20.0,<0.35.0" --no-warn-conflicts
+pip install "mosaicml>=0.17.0,<=0.18.2" --no-warn-conflicts
 pip install datasets>=2.14.0 transformers>=4.30.0 huggingface_hub>=0.17.0
 pip install wandb>=0.15.0 torchmetrics>=1.0.0
 pip install matplotlib seaborn tqdm pyyaml Pillow
