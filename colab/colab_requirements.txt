@@ -4,7 +4,7 @@
 # Core ML Libraries (Colab-compatible versions)
 torch>=2.0.0,<2.3.0
 torchvision>=0.15.0,<0.19.0
-mosaicml>=0.17.0,<=0.18.2  # Use available stable version, avoid 0.12.0 metadata issues
+mosaicml>=0.20.0,<0.30.0  # Use recent stable version, avoid 0.12.0 metadata issues
 torchmetrics>=0.11.0
 
 # HuggingFace for dataset streaming

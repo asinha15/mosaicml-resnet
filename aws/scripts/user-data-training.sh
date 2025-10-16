@@ -135,7 +135,6 @@ case $CONFIG_NAME in
               --use-blurpool \
               --device auto \
               --precision amp_fp16 \
-              --grad-clip-norm 1.0 \
               --save-interval 2ep \
               --wandb-project mosaic-resnet50-phase2-validation \
               --log-interval 50ba"
@@ -164,7 +163,6 @@ case $CONFIG_NAME in
               --use-swa \
               --device auto \
               --precision amp_fp16 \
-              --grad-clip-norm 1.0 \
               --save-interval 5ep \
               --wandb-project mosaic-resnet50-phase3-production \
               --log-interval 100ba"
@@ -187,7 +185,6 @@ case $CONFIG_NAME in
               --use-channels-last \
               --device auto \
               --precision amp_fp16 \
-              --grad-clip-norm 1.0 \
               --wandb-project mosaic-resnet50-colab \
               --log-interval 10ba"
         ;;
@@ -200,7 +197,7 @@ esac
 
 # Training command
 echo "🚀 Starting ResNet50 training with $CONFIG_NAME..."
-python train.py $ARGS \
+python ./shared/train.py $ARGS \
     --save-folder /opt/checkpoints \
     --experiment-name ${CONFIG_NAME}_$(date +%Y%m%d_%H%M%S) \
     2>&1 | tee /opt/logs/training_${CONFIG_NAME}_$(date +%Y%m%d_%H%M%S).log
