@@ -110,9 +110,9 @@ ls -la /mnt/imagenet-data/
 export HF_HOME="/mnt/imagenet-data/hf_home"
 export HF_HUB_CACHE="/mnt/imagenet-data/hf_home/hub"
 export TRANSFORMERS_CACHE="/mnt/imagenet-data/transformers_cache"
-export HF_DATASETS_OFFLINE=1  # Use local cache only
+# Note: HF_DATASETS_OFFLINE will be managed automatically by the training code
 echo "🔧 Set HF_HOME=/mnt/imagenet-data/hf_home"
-echo "🔧 Set offline mode for cached ImageNet data"
+echo "🔧 HuggingFace cache configured for local ImageNet data"
 
 # Get config from command line argument or use default
 CONFIG_NAME="${1:-aws_g4dn_validation_config}"
@@ -250,7 +250,7 @@ cd /opt/mosaic-resnet50
 export HF_HOME="/mnt/imagenet-data/hf_home"
 export HF_HUB_CACHE="/mnt/imagenet-data/hf_home/hub"
 export TRANSFORMERS_CACHE="/mnt/imagenet-data/transformers_cache"
-export HF_DATASETS_OFFLINE=1
+# Note: HF_DATASETS_OFFLINE managed automatically by training code
 
 # Check if ImageNet data is mounted
 if [ ! -d "/mnt/imagenet-data" ]; then
@@ -293,19 +293,24 @@ import os
 os.environ['HF_HOME'] = '/mnt/imagenet-data/hf_home'
 os.environ['HF_HUB_CACHE'] = '/mnt/imagenet-data/hf_home/hub'
 os.environ['TRANSFORMERS_CACHE'] = '/mnt/imagenet-data/transformers_cache'
-os.environ['HF_DATASETS_OFFLINE'] = '1'
+# Note: HF_DATASETS_OFFLINE managed by data_utils automatically
 
 try:
     from shared.data_utils import create_dataloaders
     print('   ✅ Successfully imported data_utils')
     
     # Test creating dataloaders with HuggingFace (local cache)
+    # Provide dummy token for cached datasets (sometimes required)
+    import os
+    dummy_token = os.environ.get('HF_TOKEN', 'dummy_token_for_cache')
+    
     train_loader, val_loader = create_dataloaders(
         batch_size=8,
         num_workers=1, 
         subset_size=100,
         use_hf=True,  # Use HuggingFace dataset
-        streaming=False  # Use local cache, not streaming
+        streaming=False,  # Use local cache, not streaming
+        token=dummy_token
     )
     print(f'   ✅ Created train loader: {len(train_loader)} batches')
     print(f'   ✅ Created val loader: {len(val_loader)} batches')
@@ -342,7 +347,7 @@ export PYTHONPATH="/opt/mosaic-resnet50:$PYTHONPATH"
 export HF_HOME="/mnt/imagenet-data/hf_home"
 export HF_HUB_CACHE="/mnt/imagenet-data/hf_home/hub"
 export TRANSFORMERS_CACHE="/mnt/imagenet-data/transformers_cache"
-export HF_DATASETS_OFFLINE=1  # Use local cache only
+# Note: HF_DATASETS_OFFLINE managed automatically by training code
 
 # Aliases
 alias activate_training='source /home/ubuntu/activate_env.sh'
@@ -352,8 +357,8 @@ alias check_gpu='nvidia-smi'
 alias check_logs='tail -f /opt/logs/training_*.log'
 
 # To use HuggingFace streaming from internet instead of local cache:
-# Remove HF_DATASETS_OFFLINE=1 and add --streaming flag
-# Example: unset HF_DATASETS_OFFLINE && python ./shared/train.py --use-hf --streaming --other-args
+# Just add --streaming flag (offline mode handled automatically)
+# Example: python ./shared/train.py --use-hf --streaming --other-args
 EOF
 
 # Final setup message
@@ -389,12 +394,12 @@ Environment Details:
 
 Data Configuration:
 💾 Default: Uses LOCAL HuggingFace cache from /mnt/imagenet-data/hf_home
-   - HF_DATASETS_OFFLINE=1 (no internet downloads)
+   - Automatically detects and uses local cache when available
    - --use-hf flag enabled (uses HuggingFace dataset format)
-   - No --streaming flag (uses local cache)
+   - No --streaming flag (uses local cache, not streaming)
+   - Smart offline/online mode switching as needed
 
 🌊 Alternative: To stream from internet instead:
-   unset HF_DATASETS_OFFLINE
    python ./shared/train.py --use-hf --streaming --other-args
 
 Useful Commands:

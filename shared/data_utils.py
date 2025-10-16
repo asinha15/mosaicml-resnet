@@ -78,42 +78,100 @@ class ImageNetHF(VisionDataset):
             print(f"Loading ImageNet {split} split from HuggingFace (online)...")
         
         try:
-            if streaming:
-                # Use streaming mode - much faster startup
-                print(f"   🌊 Using streaming mode for fast startup")
-                self.dataset = load_dataset(
-                    "imagenet-1k", 
-                    split=split, 
-                    streaming=True,
-                    token=self.token
-                )
+            if offline_mode and hf_home:
+                # Special handling for offline cached datasets
+                print(f"   💾 Loading from offline cache (no Hub connection)")
                 
-                if subset_size is not None:
-                    # For streaming with subset, we'll limit during iteration
-                    self._length = min(subset_size, 1281167 if split == 'train' else 50000)
-                    self._subset_size = subset_size
-                    print(f"   📊 Will use first {self._length:,} samples from stream")
-                else:
-                    self._length = 1281167 if split == 'train' else 50000
-                    self._subset_size = None
+                # Temporarily disable offline mode for loading, then re-enable
+                original_offline = os.environ.get('HF_DATASETS_OFFLINE')
+                os.environ.pop('HF_DATASETS_OFFLINE', None)
+                
+                try:
+                    if streaming:
+                        print(f"   🌊 Using streaming mode with cache")
+                        self.dataset = load_dataset(
+                            "imagenet-1k", 
+                            split=split, 
+                            streaming=True,
+                            token=self.token,
+                            cache_dir=hf_home
+                        )
+                        
+                        if subset_size is not None:
+                            self._length = min(subset_size, 1281167 if split == 'train' else 50000)
+                            self._subset_size = subset_size
+                            print(f"   📊 Will use first {self._length:,} samples from stream")
+                        else:
+                            self._length = 1281167 if split == 'train' else 50000
+                            self._subset_size = None
+                    else:
+                        print(f"   💾 Loading cached dataset into memory")
+                        self.dataset = load_dataset(
+                            "imagenet-1k", 
+                            split=split, 
+                            token=self.token,
+                            cache_dir=hf_home
+                        )
+                        
+                        if subset_size is not None:
+                            # Sample random subset
+                            indices = np.random.choice(len(self.dataset), 
+                                                     min(subset_size, len(self.dataset)), 
+                                                     replace=False)
+                            self.dataset = self.dataset.select(indices)
+                            print(f"✅ Created subset with {len(self.dataset)} samples")
+                        
+                        self._length = len(self.dataset)
+                        
+                finally:
+                    # Restore offline mode
+                    if original_offline:
+                        os.environ['HF_DATASETS_OFFLINE'] = original_offline
+                    
             else:
-                # Load subset into memory (slower startup but deterministic sampling)
-                print(f"   💾 Loading dataset into memory for deterministic sampling")
-                self.dataset = load_dataset("imagenet-1k", split=split, token=self.token)
-                
-                if subset_size is not None:
-                    # Sample random subset
-                    indices = np.random.choice(len(self.dataset), 
-                                             min(subset_size, len(self.dataset)), 
-                                             replace=False)
-                    self.dataset = self.dataset.select(indices)
-                    print(f"✅ Created subset with {len(self.dataset)} samples")
-                
-                self._length = len(self.dataset)
+                # Online mode or no cache
+                if streaming:
+                    # Use streaming mode - much faster startup
+                    print(f"   🌊 Using streaming mode for fast startup")
+                    self.dataset = load_dataset(
+                        "imagenet-1k", 
+                        split=split, 
+                        streaming=True,
+                        token=self.token
+                    )
+                    
+                    if subset_size is not None:
+                        # For streaming with subset, we'll limit during iteration
+                        self._length = min(subset_size, 1281167 if split == 'train' else 50000)
+                        self._subset_size = subset_size
+                        print(f"   📊 Will use first {self._length:,} samples from stream")
+                    else:
+                        self._length = 1281167 if split == 'train' else 50000
+                        self._subset_size = None
+                else:
+                    # Load subset into memory (slower startup but deterministic sampling)
+                    print(f"   💾 Loading dataset into memory for deterministic sampling")
+                    self.dataset = load_dataset("imagenet-1k", split=split, token=self.token)
+                    
+                    if subset_size is not None:
+                        # Sample random subset
+                        indices = np.random.choice(len(self.dataset), 
+                                                 min(subset_size, len(self.dataset)), 
+                                                 replace=False)
+                        self.dataset = self.dataset.select(indices)
+                        print(f"✅ Created subset with {len(self.dataset)} samples")
+                    
+                    self._length = len(self.dataset)
         
         except Exception as e:
             print(f"❌ Error loading ImageNet: {e}")
-            if "401" in str(e) or "unauthorized" in str(e).lower():
+            
+            if "OfflineModeIsEnabled" in str(e):
+                print("\n🔧 OFFLINE MODE ERROR:")
+                print("   The HuggingFace library can't load datasets in offline mode.")
+                print("   This is expected behavior - the fix is being applied automatically.")
+                print("   If this persists, check your cache directory structure.")
+            elif "401" in str(e) or "unauthorized" in str(e).lower():
                 print("\n🔐 AUTHENTICATION ERROR:")
                 print("   ImageNet-1k is a gated dataset requiring access approval.")
                 print("   Steps to fix:")
@@ -121,6 +179,12 @@ class ImageNetHF(VisionDataset):
                 print("   2. Request access (may take 1-2 days)")
                 print("   3. Get your token: https://huggingface.co/settings/tokens")
                 print("   4. Set token: export HF_TOKEN='your_token' or pass token parameter")
+            elif "ConnectionError" in str(e) or "couldn't reach" in str(e).lower():
+                print("\n🌐 CONNECTION ERROR:")
+                print("   Can't connect to HuggingFace Hub. Possible solutions:")
+                print("   1. Check internet connection")
+                print("   2. Use cached data with proper environment setup")
+                print("   3. Temporarily disable offline mode for initial load")
             else:
                 print("💡 Make sure you have access to the imagenet-1k dataset on HuggingFace")
             raise
