@@ -10,9 +10,18 @@ import wandb
 from composer import Trainer
 from composer.algorithms import (
     BlurPool, ChannelsLast, EMA, LabelSmoothing,
-    MixUp, CutMix, RandAugment, TrivialAugment,
+    MixUp, CutMix, RandAugment,
     LayerFreezing, SAM, SWA
 )
+
+# Try to import TrivialAugment (not available in all Composer versions)
+try:
+    from composer.algorithms import TrivialAugment
+    TRIVIAL_AUGMENT_AVAILABLE = True
+except ImportError:
+    print("⚠️ TrivialAugment not available in this Composer version, skipping...")
+    TrivialAugment = None
+    TRIVIAL_AUGMENT_AVAILABLE = False
 from composer.callbacks import (
     LRMonitor, MemoryMonitor, SpeedMonitor,
     ThresholdStopper, EarlyStopper

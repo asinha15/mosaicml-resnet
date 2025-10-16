@@ -37,7 +37,7 @@ pip install torch==2.1.0 torchvision==0.16.0 torchaudio==2.1.0 --index-url https
 
 # Install MosaicML and other packages
 echo "🎼 Installing MosaicML Composer and dependencies..."
-pip install mosaicml>=0.17.0
+pip install mosaicml[all]>=0.18.0
 pip install datasets>=2.14.0 transformers>=4.30.0 huggingface_hub>=0.17.0
 pip install wandb>=0.15.0 torchmetrics>=1.0.0
 pip install matplotlib seaborn tqdm pyyaml Pillow
@@ -62,7 +62,7 @@ mkdir -p /opt/logs
 
 # Clone project (if not already present)
 if [ ! -d "/opt/mosaic-resnet50/.git" ]; then
-    git clone https://github.com/your-username/mosaic-resnet50.git /opt/mosaic-resnet50 || echo "⚠️ Git clone failed - will need manual setup"
+    git clone https://github.com/your-username/mosaicml-resnet.git /opt/mosaic-resnet50 || echo "⚠️ Git clone failed - will need manual setup"
 fi
 
 # Set permissions
@@ -109,14 +109,99 @@ ls -la /mnt/imagenet-data/
 CONFIG_NAME="${1:-aws_g4dn_validation_config}"
 echo "🎯 Using configuration: $CONFIG_NAME"
 
-# Training command with config
+# Set training parameters based on config
+case $CONFIG_NAME in
+    "aws_g4dn_validation_config")
+        echo "📊 1-Hour Validation Configuration"
+        ARGS="--model-type torchvision \
+              --compile-model \
+              --data-subset 25000 \
+              --batch-size 256 \
+              --image-size 224 \
+              --num-workers 8 \
+              --use-hf \
+              --epochs 10 \
+              --lr 0.05 \
+              --weight-decay 1e-4 \
+              --momentum 0.9 \
+              --optimizer sgd \
+              --use-mixup \
+              --use-cutmix \
+              --use-randaugment \
+              --use-label-smoothing \
+              --use-ema \
+              --use-channels-last \
+              --use-blurpool \
+              --device auto \
+              --precision amp_fp16 \
+              --grad-clip-norm 1.0 \
+              --save-interval 2ep \
+              --wandb-project mosaic-resnet50-phase2-validation \
+              --log-interval 50ba"
+        ;;
+    "aws_g4dn_12xl_ddp_config")
+        echo "📊 Full Training Configuration (4x T4)"
+        ARGS="--model-type torchvision \
+              --compile-model \
+              --batch-size 128 \
+              --image-size 224 \
+              --num-workers 16 \
+              --use-hf \
+              --epochs 90 \
+              --lr 0.4 \
+              --weight-decay 1e-4 \
+              --momentum 0.9 \
+              --optimizer sgd \
+              --use-mixup \
+              --use-cutmix \
+              --use-randaugment \
+              --use-label-smoothing \
+              --use-ema \
+              --use-channels-last \
+              --use-blurpool \
+              --use-sam \
+              --use-swa \
+              --device auto \
+              --precision amp_fp16 \
+              --grad-clip-norm 1.0 \
+              --save-interval 5ep \
+              --wandb-project mosaic-resnet50-phase3-production \
+              --log-interval 100ba"
+        ;;
+    "colab_config")
+        echo "📊 Colab Test Configuration"
+        ARGS="--model-type torchvision \
+              --data-subset 1000 \
+              --batch-size 64 \
+              --image-size 224 \
+              --num-workers 2 \
+              --use-hf \
+              --epochs 3 \
+              --lr 0.01 \
+              --weight-decay 1e-4 \
+              --momentum 0.9 \
+              --optimizer sgd \
+              --use-mixup \
+              --use-label-smoothing \
+              --use-channels-last \
+              --device auto \
+              --precision amp_fp16 \
+              --grad-clip-norm 1.0 \
+              --wandb-project mosaic-resnet50-colab \
+              --log-interval 10ba"
+        ;;
+    *)
+        echo "❌ Unknown configuration: $CONFIG_NAME"
+        echo "Available configs: aws_g4dn_validation_config, aws_g4dn_12xl_ddp_config, colab_config"
+        exit 1
+        ;;
+esac
+
+# Training command
 echo "🚀 Starting ResNet50 training with $CONFIG_NAME..."
-python train.py \
-    --config configs/training_configs.yaml \
-    --config-name $CONFIG_NAME \
-    --imagenet-path /mnt/imagenet-data/dataset_hf \
-    --checkpoint-dir /opt/checkpoints \
-    --log-dir /opt/logs \
+python train.py $ARGS \
+    --save-folder /opt/checkpoints \
+    --experiment-name ${CONFIG_NAME}_$(date +%Y%m%d_%H%M%S) \
     2>&1 | tee /opt/logs/training_${CONFIG_NAME}_$(date +%Y%m%d_%H%M%S).log
 
 EOTS
@@ -192,7 +277,9 @@ Useful Commands:
 - activate_training: Activate environment and navigate to project
 
 Mount ImageNet Volume First:
-   sudo mount /dev/nvme1n1 /mnt/imagenet-data
+   sudo mkdir -p /mnt/imagenet-data
+   sudo mount /dev/sdf /mnt/imagenet-data
+   # Alternative: sudo mount /dev/sdf1 /mnt/imagenet-data
 
 EORM
 
