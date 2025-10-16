@@ -106,6 +106,10 @@ fi
 echo "✅ ImageNet data found at /mnt/imagenet-data"
 ls -la /mnt/imagenet-data/
 
+# Set environment variable for local ImageNet path
+export IMAGENET_ROOT="/mnt/imagenet-data"
+echo "🔧 Set IMAGENET_ROOT=/mnt/imagenet-data"
+
 # Get config from command line argument or use default
 CONFIG_NAME="${1:-aws_g4dn_validation_config}"
 echo "🎯 Using configuration: $CONFIG_NAME"
@@ -113,14 +117,13 @@ echo "🎯 Using configuration: $CONFIG_NAME"
 # Set training parameters based on config
 case $CONFIG_NAME in
     "aws_g4dn_validation_config")
-        echo "📊 1-Hour Validation Configuration"
+        echo "📊 1-Hour Validation Configuration (Local ImageNet)"
         ARGS="--model-type torchvision \
               --compile-model \
               --data-subset 25000 \
               --batch-size 256 \
               --image-size 224 \
               --num-workers 8 \
-              --use-hf \
               --epochs 10 \
               --lr 0.05 \
               --weight-decay 1e-4 \
@@ -140,13 +143,12 @@ case $CONFIG_NAME in
               --log-interval 50ba"
         ;;
     "aws_g4dn_12xl_ddp_config")
-        echo "📊 Full Training Configuration (4x T4)"
+        echo "📊 Full Training Configuration (4x T4, Local ImageNet)"
         ARGS="--model-type torchvision \
               --compile-model \
               --batch-size 128 \
               --image-size 224 \
               --num-workers 16 \
-              --use-hf \
               --epochs 90 \
               --lr 0.4 \
               --weight-decay 1e-4 \
@@ -227,18 +229,110 @@ EOVS
 chmod +x /home/ubuntu/start_validation.sh
 chown ubuntu:ubuntu /home/ubuntu/start_validation.sh
 
+# Create data validation script
+cat > /home/ubuntu/validate_imagenet.sh << 'EOVD'
+#!/bin/bash
+set -e
+
+echo "🔍 Validating ImageNet Data Setup..."
+
+# Activate environment
+source /opt/resnet50-env/bin/activate
+cd /opt/mosaic-resnet50
+
+# Set environment variables
+export IMAGENET_ROOT="/mnt/imagenet-data"
+
+# Check if ImageNet data is mounted
+if [ ! -d "/mnt/imagenet-data" ]; then
+    echo "❌ ImageNet data not found at /mnt/imagenet-data"
+    exit 1
+fi
+
+echo "✅ ImageNet data directory found"
+
+# Check for expected structure (train/val directories)
+if [ ! -d "/mnt/imagenet-data/train" ] || [ ! -d "/mnt/imagenet-data/val" ]; then
+    echo "❌ Expected ImageNet structure not found"
+    echo "   Expected: /mnt/imagenet-data/train and /mnt/imagenet-data/val"
+    echo "   Found:"
+    ls -la /mnt/imagenet-data/ | head -10
+    exit 1
+fi
+
+echo "✅ ImageNet directory structure is correct"
+
+# Count samples quickly
+train_classes=$(ls /mnt/imagenet-data/train | wc -l)
+val_classes=$(ls /mnt/imagenet-data/val | wc -l)
+
+echo "📊 Dataset statistics:"
+echo "   Training classes: $train_classes"
+echo "   Validation classes: $val_classes"
+
+if [ "$train_classes" -ne 1000 ] || [ "$val_classes" -ne 1000 ]; then
+    echo "⚠️  Warning: Expected 1000 classes, found train=$train_classes val=$val_classes"
+fi
+
+# Test data loading with Python
+echo "🧪 Testing Python data loading..."
+python3 -c "
+import os
+os.environ['IMAGENET_ROOT'] = '/mnt/imagenet-data'
+
+try:
+    from shared.data_utils import create_dataloaders
+    print('   ✅ Successfully imported data_utils')
+    
+    # Test creating dataloaders with local ImageNet
+    train_loader, val_loader = create_dataloaders(
+        batch_size=8,
+        num_workers=1, 
+        subset_size=100,
+        use_hf=False  # Use local ImageNet
+    )
+    print(f'   ✅ Created train loader: {len(train_loader)} batches')
+    print(f'   ✅ Created val loader: {len(val_loader)} batches')
+    
+    # Test loading one batch
+    batch = next(iter(train_loader))
+    images, labels = batch
+    print(f'   ✅ Loaded batch: images {images.shape}, labels {labels.shape}')
+    print(f'   ✅ Label range: {labels.min().item()}-{labels.max().item()}')
+    
+except Exception as e:
+    print(f'   ❌ Data loading test failed: {e}')
+    import traceback
+    traceback.print_exc()
+    exit(1)
+"
+
+echo "✅ ImageNet validation completed successfully!"
+echo "🚀 Ready for training with local ImageNet data"
+
+EOVD
+
+chmod +x /home/ubuntu/validate_imagenet.sh
+chown ubuntu:ubuntu /home/ubuntu/validate_imagenet.sh
+
 # Set up environment variables
 cat >> /home/ubuntu/.bashrc << 'EOF'
 # Training environment
 export PATH="/opt/resnet50-env/bin:$PATH"
 export CUDA_VISIBLE_DEVICES=0,1,2,3  # Adjust based on instance type
 export PYTHONPATH="/opt/mosaic-resnet50:$PYTHONPATH"
+export IMAGENET_ROOT="/mnt/imagenet-data"  # Local ImageNet data path
 
 # Aliases
 alias activate_training='source /home/ubuntu/activate_env.sh'
 alias start_training='/home/ubuntu/start_training.sh'
+alias validate_data='/home/ubuntu/validate_imagenet.sh'
 alias check_gpu='nvidia-smi'
 alias check_logs='tail -f /opt/logs/training_*.log'
+
+# To use HuggingFace streaming instead of local data:
+# Add --use-hf --streaming flags to training command
+# Example: python ./shared/train.py --use-hf --streaming --other-args
 EOF
 
 # Final setup message
@@ -246,6 +340,9 @@ cat > /home/ubuntu/README.txt << 'EORM'
 Training Instance Setup Complete! 🎉
 
 Quick Start Commands:
+
+🔍 Validate Data Setup (RUN FIRST):
+   ./validate_imagenet.sh
 
 🚀 1-Hour Validation Test (RECOMMENDED):
    ./start_validation.sh
@@ -267,10 +364,16 @@ Environment Details:
 - Project directory: /opt/mosaic-resnet50
 - Checkpoints: /opt/checkpoints
 - Logs: /opt/logs
-- ImageNet data: /mnt/imagenet-data
+- ImageNet data: /mnt/imagenet-data (LOCAL - no streaming by default)
+
+Data Configuration:
+📁 Default: Uses LOCAL ImageNet from /mnt/imagenet-data
+🌊 Streaming: Add --use-hf --streaming for HuggingFace streaming
+   Example: python ./shared/train.py --use-hf --streaming --other-args
 
 Useful Commands:
-- check_gpu: Check GPU status
+- validate_data: Validate ImageNet data setup
+- check_gpu: Check GPU status  
 - check_logs: Monitor training logs
 - activate_training: Activate environment and navigate to project
 
