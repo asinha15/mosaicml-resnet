@@ -8,10 +8,135 @@ import torch
 from torch.utils.data import DataLoader, Subset
 from torchvision.datasets import VisionDataset, ImageNet
 import torchvision.transforms as transforms
-from datasets import load_dataset
+from datasets import load_dataset, Dataset, load_from_disk
 import numpy as np
 from typing import Optional, Tuple, Union
 from PIL import Image
+import pandas as pd
+import glob
+
+
+def find_cached_imagenet_data(hf_home: str, split: str = 'train') -> Optional[str]:
+    """
+    Find cached ImageNet data in HuggingFace cache directory.
+    
+    Args:
+        hf_home: Path to HF_HOME directory
+        split: 'train' or 'validation'
+        
+    Returns:
+        Path to cached dataset directory or None if not found
+    """
+    hf_home_path = Path(hf_home)
+    
+    # Look for ImageNet dataset cache
+    imagenet_cache_pattern = hf_home_path / "hub" / "datasets--imagenet-1k" / "snapshots"
+    
+    if not imagenet_cache_pattern.parent.exists():
+        print(f"❌ No ImageNet cache found in {imagenet_cache_pattern.parent}")
+        return None
+    
+    # Find the most recent snapshot
+    snapshots = list(imagenet_cache_pattern.glob("*"))
+    if not snapshots:
+        print(f"❌ No snapshots found in {imagenet_cache_pattern}")
+        return None
+    
+    # Use the first (most recent) snapshot
+    snapshot_dir = snapshots[0]
+    print(f"📁 Found ImageNet cache snapshot: {snapshot_dir}")
+    
+    # Look for the actual data directory
+    possible_paths = [
+        snapshot_dir / "data",
+        snapshot_dir / f"data/{split}",
+        snapshot_dir,
+    ]
+    
+    for path in possible_paths:
+        if path.exists():
+            # Check if it contains parquet files or other data files
+            parquet_files = list(path.glob("*.parquet"))
+            arrow_files = list(path.glob("*.arrow"))
+            
+            if parquet_files or arrow_files:
+                print(f"📊 Found cached data files in: {path}")
+                return str(path)
+    
+    print(f"⚠️  Found cache directory but no data files in: {snapshot_dir}")
+    return None
+
+
+def load_cached_imagenet_dataset(cache_path: str, split: str = 'train') -> Optional[Dataset]:
+    """
+    Load ImageNet dataset directly from cached files.
+    
+    Args:
+        cache_path: Path to cached data directory
+        split: 'train' or 'validation'
+        
+    Returns:
+        Dataset object or None if loading fails
+    """
+    cache_path_obj = Path(cache_path)
+    
+    try:
+        # Method 1: Try loading as a saved dataset
+        print(f"   🔄 Attempting to load cached dataset from {cache_path}")
+        
+        # Look for dataset files
+        if (cache_path_obj / "dataset_info.json").exists():
+            print(f"   📂 Found dataset_info.json, loading with load_from_disk...")
+            dataset = load_from_disk(str(cache_path_obj))
+            
+            if isinstance(dataset, dict):
+                # Multi-split dataset
+                if split == 'validation' and 'validation' in dataset:
+                    return dataset['validation']
+                elif split == 'train' and 'train' in dataset:
+                    return dataset['train']
+                else:
+                    # Return first available split
+                    first_split = list(dataset.keys())[0]
+                    print(f"   🔄 Requested split '{split}' not found, using '{first_split}'")
+                    return dataset[first_split]
+            else:
+                return dataset
+        
+        # Method 2: Try loading parquet files directly
+        parquet_files = list(cache_path_obj.glob("*.parquet"))
+        if parquet_files:
+            print(f"   📊 Found {len(parquet_files)} parquet files, loading directly...")
+            
+            # Load all parquet files
+            dataframes = []
+            for parquet_file in parquet_files:
+                df = pd.read_parquet(parquet_file)
+                dataframes.append(df)
+            
+            if dataframes:
+                combined_df = pd.concat(dataframes, ignore_index=True)
+                print(f"   ✅ Loaded {len(combined_df)} samples from parquet files")
+                
+                # Convert to HuggingFace Dataset
+                dataset = Dataset.from_pandas(combined_df)
+                return dataset
+        
+        # Method 3: Try loading arrow files
+        arrow_files = list(cache_path_obj.glob("*.arrow"))
+        if arrow_files:
+            print(f"   📊 Found {len(arrow_files)} arrow files, loading directly...")
+            
+            # Try to load as Dataset
+            dataset = Dataset.from_file(str(arrow_files[0]))
+            return dataset
+            
+        print(f"   ❌ No compatible data files found in {cache_path}")
+        return None
+        
+    except Exception as e:
+        print(f"   ❌ Failed to load cached dataset: {e}")
+        return None
 
 
 class ImageNetHF(VisionDataset):
@@ -78,90 +203,83 @@ class ImageNetHF(VisionDataset):
             print(f"Loading ImageNet {split} split from HuggingFace (online)...")
         
         try:
-            if offline_mode and hf_home:
-                # Special handling for offline cached datasets
-                print(f"   💾 Loading from offline cache (no Hub connection)")
+            # Try to load from cache first (bypasses authentication)
+            if hf_home:
+                print(f"   🔍 Searching for cached ImageNet data...")
+                cache_path = find_cached_imagenet_data(hf_home, split)
                 
-                # Temporarily disable offline mode for loading, then re-enable
-                original_offline = os.environ.get('HF_DATASETS_OFFLINE')
-                os.environ.pop('HF_DATASETS_OFFLINE', None)
-                
-                try:
-                    if streaming:
-                        print(f"   🌊 Using streaming mode with cache")
-                        self.dataset = load_dataset(
-                            "imagenet-1k", 
-                            split=split, 
-                            streaming=True,
-                            token=self.token,
-                            cache_dir=hf_home
-                        )
-                        
-                        if subset_size is not None:
-                            self._length = min(subset_size, 1281167 if split == 'train' else 50000)
-                            self._subset_size = subset_size
-                            print(f"   📊 Will use first {self._length:,} samples from stream")
-                        else:
-                            self._length = 1281167 if split == 'train' else 50000
-                            self._subset_size = None
-                    else:
-                        print(f"   💾 Loading cached dataset into memory")
-                        self.dataset = load_dataset(
-                            "imagenet-1k", 
-                            split=split, 
-                            token=self.token,
-                            cache_dir=hf_home
-                        )
+                if cache_path:
+                    print(f"   💾 Loading from cached files (no authentication needed)")
+                    cached_dataset = load_cached_imagenet_dataset(cache_path, split)
+                    
+                    if cached_dataset is not None:
+                        self.dataset = cached_dataset
                         
                         if subset_size is not None:
                             # Sample random subset
-                            indices = np.random.choice(len(self.dataset), 
-                                                     min(subset_size, len(self.dataset)), 
-                                                     replace=False)
+                            total_size = len(self.dataset)
+                            actual_subset_size = min(subset_size, total_size)
+                            indices = np.random.choice(total_size, actual_subset_size, replace=False)
                             self.dataset = self.dataset.select(indices)
-                            print(f"✅ Created subset with {len(self.dataset)} samples")
+                            print(f"✅ Created subset with {len(self.dataset)} samples from cache")
                         
                         self._length = len(self.dataset)
-                        
+                        print(f"✅ Successfully loaded {self._length:,} samples from cached data")
+                        return  # Success! Exit early
+                    else:
+                        print(f"   ⚠️  Could not load cached data, falling back to Hub download...")
+                else:
+                    print(f"   ⚠️  No cached data found, falling back to Hub download...")
+            
+            # Fallback: Try Hub download (requires authentication)
+            print(f"   🌐 Attempting to load from HuggingFace Hub...")
+            
+            if offline_mode:
+                # Temporarily disable offline mode for Hub access
+                original_offline = os.environ.get('HF_DATASETS_OFFLINE')
+                if 'HF_DATASETS_OFFLINE' in os.environ:
+                    del os.environ['HF_DATASETS_OFFLINE']
+                
+                try:
+                    self.dataset = load_dataset(
+                        "imagenet-1k", 
+                        split=split, 
+                        streaming=streaming,
+                        token=self.token,
+                        cache_dir=hf_home if hf_home else None
+                    )
                 finally:
                     # Restore offline mode
                     if original_offline:
                         os.environ['HF_DATASETS_OFFLINE'] = original_offline
-                    
             else:
-                # Online mode or no cache
-                if streaming:
-                    # Use streaming mode - much faster startup
-                    print(f"   🌊 Using streaming mode for fast startup")
-                    self.dataset = load_dataset(
-                        "imagenet-1k", 
-                        split=split, 
-                        streaming=True,
-                        token=self.token
-                    )
-                    
-                    if subset_size is not None:
-                        # For streaming with subset, we'll limit during iteration
-                        self._length = min(subset_size, 1281167 if split == 'train' else 50000)
-                        self._subset_size = subset_size
-                        print(f"   📊 Will use first {self._length:,} samples from stream")
-                    else:
-                        self._length = 1281167 if split == 'train' else 50000
-                        self._subset_size = None
+                self.dataset = load_dataset(
+                    "imagenet-1k", 
+                    split=split, 
+                    streaming=streaming,
+                    token=self.token,
+                    cache_dir=hf_home if hf_home else None
+                )
+            
+            # Handle subset for Hub-loaded data
+            if streaming:
+                if subset_size is not None:
+                    self._length = min(subset_size, 1281167 if split == 'train' else 50000)
+                    self._subset_size = subset_size
+                    print(f"   📊 Will use first {self._length:,} samples from stream")
                 else:
-                    # Load subset into memory (slower startup but deterministic sampling)
-                    print(f"   💾 Loading dataset into memory for deterministic sampling")
-                    self.dataset = load_dataset("imagenet-1k", split=split, token=self.token)
-                    
-                    if subset_size is not None:
-                        # Sample random subset
-                        indices = np.random.choice(len(self.dataset), 
-                                                 min(subset_size, len(self.dataset)), 
-                                                 replace=False)
-                        self.dataset = self.dataset.select(indices)
-                        print(f"✅ Created subset with {len(self.dataset)} samples")
-                    
-                    self._length = len(self.dataset)
+                    self._length = 1281167 if split == 'train' else 50000
+                    self._subset_size = None
+            else:
+                if subset_size is not None:
+                    # Sample random subset
+                    indices = np.random.choice(len(self.dataset), 
+                                             min(subset_size, len(self.dataset)), 
+                                             replace=False)
+                    self.dataset = self.dataset.select(indices)
+                    print(f"✅ Created subset with {len(self.dataset)} samples")
+                
+                self._length = len(self.dataset)
         
         except Exception as e:
             print(f"❌ Error loading ImageNet: {e}")

@@ -59,7 +59,7 @@ def test_hf_cache_setup():
     
     print(f"   ✅ Found ImageNet cache: {imagenet_dirs[0]}")
     
-    # Check cache size
+    # Check cache size and detailed structure
     try:
         import subprocess
         result = subprocess.run(['du', '-sh', str(hf_home_path)], 
@@ -70,8 +70,81 @@ def test_hf_cache_setup():
     except:
         print("   📊 Cache size: Unable to determine")
     
-    # Test data loading
-    print("\n3. Testing Data Loading:")
+    # Examine cache structure in detail
+    print("\n   🔍 Cache Structure Analysis:")
+    imagenet_cache = hf_home_path / "hub" / "datasets--imagenet-1k"
+    if imagenet_cache.exists():
+        print(f"   📁 ImageNet cache directory: {imagenet_cache}")
+        
+        snapshots_dir = imagenet_cache / "snapshots"
+        if snapshots_dir.exists():
+            snapshots = list(snapshots_dir.glob("*"))
+            print(f"   📂 Found {len(snapshots)} snapshot(s):")
+            
+            for snapshot in snapshots[:3]:  # Show first 3 snapshots
+                print(f"      📄 {snapshot.name}")
+                
+                # Look for data files
+                data_dir = snapshot / "data"
+                if data_dir.exists():
+                    files = list(data_dir.glob("*"))
+                    print(f"         📊 Data directory contains {len(files)} files")
+                    
+                    # Show file types
+                    file_types = {}
+                    for f in files[:10]:  # Check first 10 files
+                        ext = f.suffix.lower()
+                        file_types[ext] = file_types.get(ext, 0) + 1
+                    
+                    for ext, count in file_types.items():
+                        print(f"         📄 {ext or 'no extension'}: {count} files")
+                else:
+                    # Check if files are in the snapshot root
+                    files = list(snapshot.glob("*"))
+                    print(f"         📊 Snapshot root contains {len(files)} items")
+                    for f in files[:5]:
+                        print(f"         📄 {f.name}")
+    else:
+        print(f"   ❌ No ImageNet cache found at expected location")
+    
+    # Test direct cache loading first
+    print("\n2.5. Testing Direct Cache Loading:")
+    try:
+        from data_utils import find_cached_imagenet_data, load_cached_imagenet_dataset
+        print("   ✅ Successfully imported cache loading functions")
+        
+        # Test finding cached data
+        cache_path = find_cached_imagenet_data(hf_home, 'train')
+        if cache_path:
+            print(f"   ✅ Found cached data path: {cache_path}")
+            
+            # Test loading cached dataset
+            cached_dataset = load_cached_imagenet_dataset(cache_path, 'train')
+            if cached_dataset:
+                print(f"   ✅ Successfully loaded cached dataset: {len(cached_dataset)} samples")
+                
+                # Test a few samples
+                sample = cached_dataset[0]
+                print(f"   ✅ Sample keys: {list(sample.keys())}")
+                
+                # Check if we have image and label data
+                if 'image' in sample and 'label' in sample:
+                    print(f"   ✅ Dataset contains image and label data")
+                    return True
+                else:
+                    print(f"   ⚠️  Dataset missing expected 'image' or 'label' fields")
+            else:
+                print(f"   ❌ Could not load cached dataset")
+        else:
+            print(f"   ❌ Could not find cached data path")
+            
+    except Exception as e:
+        print(f"   ❌ Direct cache loading failed: {e}")
+        import traceback
+        traceback.print_exc()
+    
+    # Test data loading via data_utils
+    print("\n3. Testing Data Loading via DataUtils:")
     try:
         from data_utils import create_dataloaders
         print("   ✅ Successfully imported data_utils")

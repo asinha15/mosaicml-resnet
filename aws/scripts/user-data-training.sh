@@ -300,17 +300,14 @@ try:
     print('   ✅ Successfully imported data_utils')
     
     # Test creating dataloaders with HuggingFace (local cache)
-    # Provide dummy token for cached datasets (sometimes required)
-    import os
-    dummy_token = os.environ.get('HF_TOKEN', 'dummy_token_for_cache')
-    
+    # The new system will automatically use cached data without token if available
     train_loader, val_loader = create_dataloaders(
         batch_size=8,
         num_workers=1, 
         subset_size=100,
         use_hf=True,  # Use HuggingFace dataset
         streaming=False,  # Use local cache, not streaming
-        token=dummy_token
+        token=None  # No token needed for cached data
     )
     print(f'   ✅ Created train loader: {len(train_loader)} batches')
     print(f'   ✅ Created val loader: {len(val_loader)} batches')

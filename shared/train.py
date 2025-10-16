@@ -326,10 +326,25 @@ def main(args=None):
     
     # Get HuggingFace token for gated datasets
     hf_token = os.environ.get('HF_TOKEN')
+    hf_home = os.environ.get('HF_HOME')
+    
     if args.use_hf and not hf_token:
-        print("⚠️  Warning: No HF_TOKEN environment variable found.")
-        print("   ImageNet-1k is a gated dataset. You may encounter authentication errors.")
-        print("   Set HF_TOKEN environment variable: export HF_TOKEN='your_token'")
+        if hf_home:
+            print("💡 No HF_TOKEN found, but HF_HOME is set - will try to use cached data.")
+            print("   If cached ImageNet data is available, no authentication is needed.")
+            print("   If cache loading fails, you may need: export HF_TOKEN='your_token'")
+        else:
+            print("⚠️  Warning: No HF_TOKEN environment variable found.")
+            print("   ImageNet-1k is a gated dataset. You may encounter authentication errors.")
+            print("   Set HF_TOKEN environment variable: export HF_TOKEN='your_token'")
+    
+    print(f"📊 Data configuration:")
+    print(f"   - use_hf: {args.use_hf}")
+    print(f"   - streaming: {args.streaming}")
+    print(f"   - subset_size: {subset_size}")
+    print(f"   - batch_size: {args.batch_size}")
+    if hf_home:
+        print(f"   - HF_HOME: {hf_home} (cached data available)")
     
     train_dataloader, val_dataloader = create_dataloaders(
         batch_size=args.batch_size,
