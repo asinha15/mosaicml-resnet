@@ -35,7 +35,7 @@ aws ec2 run-instances \
   --instance-market-options '{
     "MarketType": "spot",
     "SpotOptions": {
-      "MaxPrice": "0.99",
+      "MaxPrice": "0.79",
       "SpotInstanceType": "one-time",
       "InstanceInterruptionBehavior": "terminate"
     }

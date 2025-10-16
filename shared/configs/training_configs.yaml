@@ -36,7 +36,7 @@ colab_config:
   # Infrastructure
   device: 'auto'
   precision: 'amp_fp16'
-  grad_clip_norm: 1.0
+  # Note: grad_clip_norm removed for compatibility with newer MosaicML versions
   
   # Logging
   wandb_project: 'mosaic-resnet50-colab'
@@ -79,7 +79,7 @@ aws_g4dn_validation_config:
   # Infrastructure
   device: 'auto'
   precision: 'amp_fp16'
-  grad_clip_norm: 1.0
+  # Note: grad_clip_norm removed for compatibility with newer MosaicML versions
   save_folder: '/opt/checkpoints'
   save_interval: '2ep'
   
@@ -134,7 +134,7 @@ aws_g4dn_12xl_ddp_config:
   # Infrastructure
   device: 'auto'
   precision: 'amp_fp16'
-  grad_clip_norm: 1.0
+  # Note: grad_clip_norm removed for compatibility with newer MosaicML versions
   save_folder: '/opt/checkpoints'
   save_interval: '5ep'
   
@@ -183,7 +183,7 @@ dev_config:
   # Infrastructure
   device: 'auto'
   precision: 'amp_fp16'
-  grad_clip_norm: 1.0
+  # Note: grad_clip_norm removed for compatibility with newer MosaicML versions
   save_folder: './dev_checkpoints'
   save_interval: '2ep'
   

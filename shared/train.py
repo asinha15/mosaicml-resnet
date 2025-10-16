@@ -4,6 +4,7 @@ Includes comprehensive optimizations and configurations for different scenarios.
 """
 import os
 import argparse
+import traceback
 from pathlib import Path
 import torch
 import wandb
@@ -58,6 +59,8 @@ def setup_args() -> argparse.Namespace:
                       help='Number of data loading workers')
     parser.add_argument('--use-hf', action='store_true', default=True,
                       help='Use HuggingFace dataset instead of local ImageNet')
+    parser.add_argument('--streaming', action='store_true', default=False,
+                      help='Use streaming mode for HuggingFace datasets (faster startup, sequential access)')
     
     # Training arguments
     parser.add_argument('--epochs', type=int, default=90,
@@ -97,8 +100,8 @@ def setup_args() -> argparse.Namespace:
     parser.add_argument('--precision', default='amp_fp16', 
                       choices=['fp32', 'amp_fp16', 'amp_bf16'],
                       help='Training precision')
-    parser.add_argument('--grad-clip-norm', type=float, default=1.0,
-                      help='Gradient clipping norm')
+    # Note: --grad-clip-norm removed for compatibility with newer MosaicML versions
+    # Gradient clipping is now handled via GradientClipping algorithm
     parser.add_argument('--save-folder', default='./checkpoints',
                       help='Folder to save checkpoints')
     parser.add_argument('--save-interval', default='1ep',
@@ -124,6 +127,14 @@ def setup_args() -> argparse.Namespace:
 def setup_composer_algorithms(args) -> list:
     """Setup Composer optimization algorithms based on arguments."""
     algorithms = []
+    
+    # Try to add gradient clipping if available (replaces grad_clip_norm parameter)
+    try:
+        from composer.algorithms import GradientClipping
+        algorithms.append(GradientClipping(clipping_type='norm', clipping_threshold=1.0))
+        print("   ✅ Added GradientClipping algorithm")
+    except ImportError:
+        print("   💡 GradientClipping algorithm not available in this Composer version")
     
     if args.use_mixup:
         algorithms.append(MixUp(alpha=0.2))
@@ -269,9 +280,10 @@ def run_lr_finder(model, train_dataloader, args):
     print("Recommended: Use LR around where loss decreases fastest.")
 
 
-def main():
+def main(args=None):
     """Main training function."""
-    args = setup_args()
+    if args is None:
+        args = setup_args()
     
     # Set up reproducibility
     reproducibility.seed_all(42)
@@ -312,12 +324,21 @@ def main():
     if args.dry_run:
         subset_size = 1000  # Force small subset for dry run
     
+    # Get HuggingFace token for gated datasets
+    hf_token = os.environ.get('HF_TOKEN')
+    if args.use_hf and not hf_token:
+        print("⚠️  Warning: No HF_TOKEN environment variable found.")
+        print("   ImageNet-1k is a gated dataset. You may encounter authentication errors.")
+        print("   Set HF_TOKEN environment variable: export HF_TOKEN='your_token'")
+    
     train_dataloader, val_dataloader = create_dataloaders(
         batch_size=args.batch_size,
         num_workers=args.num_workers,
         subset_size=subset_size,
         image_size=args.image_size,
-        use_hf=args.use_hf
+        use_hf=args.use_hf,
+        streaming=args.streaming,  # Use streaming flag from arguments
+        token=hf_token
     )
     
     # Create optimizer and scheduler
@@ -354,22 +375,84 @@ def main():
         loggers=loggers,
         save_folder=args.save_folder,
         save_interval=args.save_interval if not args.dry_run else None,
-        grad_clip_norm=args.grad_clip_norm,
+        # Note: grad_clip_norm removed for compatibility with newer MosaicML versions
+        # Gradient clipping can be added via GradientClipping algorithm if needed
         seed=42
     )
     
-    # Start training
-    print(f"Starting training for {args.epochs} epochs...")
-    print(f"Model parameters: {sum(p.numel() for p in model.parameters()):,}")
+    # Clear GPU cache before training
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+        print(f"💾 GPU cache cleared. Available: {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f} GB")
+
+    # Start training with comprehensive error handling
+    print(f"\n🚀 Starting training for {args.epochs} epochs...")
+    print(f"📊 Model parameters: {sum(p.numel() for p in model.parameters()):,}")
+    print("=" * 60)
     
-    trainer.fit()
+    try:
+        # Training with monitoring
+        trainer.fit()
+        print("\n✅ Training completed successfully!")
+        
+    except KeyboardInterrupt:
+        print("\n⛔ Training interrupted by user")
+        
+    except Exception as training_error:
+        print(f"\n❌ Training error occurred:")
+        print(f"   Error type: {type(training_error).__name__}")
+        print(f"   Error message: {str(training_error) if str(training_error) else 'No error message provided'}")
+        print(f"   Traceback:")
+        traceback.print_exc()
+        
+        # Try to save current state
+        if hasattr(trainer, 'state') and trainer.state:
+            print(f"   Training state: {trainer.state.timestamp}")
+        
+        # Provide helpful suggestions based on error type
+        error_str = str(training_error).lower()
+        if "cuda out of memory" in error_str:
+            print("\n💡 Suggestions for CUDA OOM error:")
+            print("   - Reduce batch size: --batch-size 128")
+            print("   - Enable gradient checkpointing")
+            print("   - Use mixed precision: --precision amp_fp16")
+        elif "401" in error_str or "unauthorized" in error_str:
+            print("\n💡 Suggestion: Check HuggingFace authentication:")
+            print("   export HF_TOKEN='your_token'")
+        elif "dataset access error" in error_str.lower() or "cache" in error_str.lower():
+            print("\n💡 Suggestion: Try non-streaming mode:")
+            print("   Remove --streaming flag or use smaller dataset subset")
+        
+        # GPU memory cleanup on error
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            print(f"💾 GPU cache cleared after error")
+        
+        raise  # Re-raise to ensure proper exit code
     
-    print("Training completed!")
+    print("\n" + "=" * 60)
+    print("🏁 TRAINING SUMMARY")
+    print("=" * 60)
     
-    # Save final metrics
-    if trainer.state.eval_metrics:
+    # Save final metrics with better formatting
+    if hasattr(trainer, 'state') and trainer.state and trainer.state.eval_metrics:
         final_acc = trainer.state.eval_metrics.get('MulticlassAccuracy', {}).get('val', 0)
-        print(f"Final validation accuracy: {final_acc:.4f}")
+        print(f"🎯 Final validation accuracy: {final_acc:.4f}")
+    
+    # GPU memory summary and cleanup
+    if torch.cuda.is_available():
+        peak_memory = torch.cuda.max_memory_allocated() / 1e9
+        print(f"💾 Peak GPU memory: {peak_memory:.1f} GB")
+        
+        # Comprehensive GPU cleanup
+        torch.cuda.empty_cache()
+        torch.cuda.synchronize()  # Wait for all operations to complete
+        
+        # Check final memory state
+        current_memory = torch.cuda.memory_allocated() / 1e9
+        print(f"💾 Current GPU memory after cleanup: {current_memory:.1f} GB")
+    
+    print("✅ Training completed with comprehensive error handling and memory management")
 
 
 if __name__ == '__main__':

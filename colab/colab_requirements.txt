@@ -1,0 +1,38 @@
+# Requirements for 1-Hour ImageNet Validation on Google Colab
+# Optimized for T4 GPU environment
+
+# Core ML Libraries (Colab-compatible versions)
+torch>=2.0.0,<2.3.0
+torchvision>=0.15.0,<0.19.0
+mosaicml>=0.20.0,<0.30.0  # Use recent stable version, avoid 0.12.0 metadata issues
+torchmetrics>=0.11.0
+
+# HuggingFace for dataset streaming
+datasets>=2.14.0
+transformers>=4.30.0
+huggingface_hub>=0.16.0
+
+# Data processing and utilities
+numpy>=1.24.0
+Pillow>=9.0.0
+matplotlib>=3.6.0
+tqdm>=4.64.0
+
+# Optional: Logging and monitoring
+wandb>=0.15.0
+
+# Note: Google Colab comes pre-installed with:
+# - Python 3.10+
+# - CUDA 11.8+
+# - cuDNN  
+# - Basic scientific libraries (numpy, scipy, pandas)
+#
+# Installation Instructions:
+# !pip install -r colab_requirements.txt
+#
+# If you encounter mosaicml metadata warnings, use:
+# !pip install --upgrade pip
+# !pip install "mosaicml>=0.20.0" --no-warn-conflicts
+# 
+# Alternative for persistent issues:
+# !pip install "mosaicml==0.21.0" --force-reinstall
