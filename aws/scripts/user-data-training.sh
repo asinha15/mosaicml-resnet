@@ -4,7 +4,7 @@
 
 # Log all output for debugging
 exec > >(tee /var/log/user-data.log|logger -t user-data -s 2>/dev/console) 2>&1
-echo "🚀 Starting g4dn training instance setup..."
+echo "🚀 Starting g5.16xlarge training instance setup..."
 
 # Check available resources
 echo "System resources at start:"
@@ -63,7 +63,7 @@ mkdir -p /opt/logs
 
 # Clone project (if not already present)
 if [ ! -d "/opt/mosaic-resnet50/.git" ]; then
-    git clone https://github.com/your-username/mosaicml-resnet.git /opt/mosaic-resnet50 || echo "⚠️ Git clone failed - will need manual setup"
+    git clone https://github.com/asinha15/mosaicml-resnet.git /opt/mosaic-resnet50 || echo "⚠️ Git clone failed - will need manual setup"
 fi
 
 # Set permissions
@@ -113,7 +113,7 @@ export TRANSFORMERS_CACHE="/mnt/imagenet-data/transformers_cache"
 # Note: HF_DATASETS_OFFLINE will be managed automatically by the training code
 
 # Set up Wandb API key (replace with your actual key)
-# export WANDB_API_KEY="your_wandb_api_key_here"
+export WANDB_API_KEY="a2cd1d179682f4b53d4e5a21d5482c46cfbb8e1f"
 echo "🔧 Set HF_HOME=/mnt/imagenet-data/hf_home"
 echo "🔧 HuggingFace cache configured for local ImageNet data"
 

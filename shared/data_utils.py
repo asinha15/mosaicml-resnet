@@ -128,11 +128,27 @@ def load_cached_imagenet_dataset(cache_path: str, split: str = 'train', subset_s
                     
                     # Smart chunking based on requested subset size
                     # Balance memory safety with dataset size requirements
-                    estimated_samples_needed = subset_size or 20000  # Use requested size or default
+                    if subset_size is None:
+                        # Full dataset requested - load all files
+                        estimated_samples_needed = len(parquet_files) * sample_count
+                        print(f"   🔄 Full dataset requested - loading all {len(parquet_files)} files")
+                    else:
+                        # Specific subset size requested
+                        estimated_samples_needed = subset_size
+                        print(f"   🔄 Subset requested: {subset_size:,} samples")
+                    
                     samples_per_file = max(1, sample_count)
                     files_needed = min(len(parquet_files), max(1, estimated_samples_needed // samples_per_file))
                     
-                    if files_needed == 1:
+                    if subset_size is None:
+                        # Full dataset - load all files but in memory-safe chunks
+                        print(f"   🔧 Full dataset: loading all {len(parquet_files)} files in chunks")
+                        chunk_size = len(parquet_files)  # Load all files
+                        
+                        # For very large datasets, we'll process in smaller batches during the actual loading
+                        if len(parquet_files) > 100:
+                            print(f"   ⚠️  Large dataset ({len(parquet_files)} files) - will use batch processing")
+                    elif files_needed == 1:
                         print(f"   🔧 Using single-file approach (sufficient for small requests)")
                         chunk_size = 1
                     elif files_needed <= 3:
@@ -147,8 +163,6 @@ def load_cached_imagenet_dataset(cache_path: str, split: str = 'train', subset_s
                     print(f"   🔧 Using optimized chunk size: {chunk_size} files (memory efficient)")
                     
                     # Load files based on calculated chunk size
-                    chunk_files = parquet_files[:chunk_size]
-                    
                     # Clean up sample file memory first
                     del df_sample
                     
@@ -156,9 +170,49 @@ def load_cached_imagenet_dataset(cache_path: str, split: str = 'train', subset_s
                     import gc
                     gc.collect()
                     
-                    if chunk_size == 1:
+                    if subset_size is None and len(parquet_files) > 100:
+                        # Full dataset with many files - use batch processing to avoid memory issues
+                        print(f"   🔄 Loading full dataset in memory-safe batches...")
+                        
+                        all_dataframes = []
+                        batch_size = 20  # Process 20 files at a time
+                        
+                        for batch_start in range(0, len(parquet_files), batch_size):
+                            batch_end = min(batch_start + batch_size, len(parquet_files))
+                            batch_files = parquet_files[batch_start:batch_end]
+                            
+                            print(f"      🔄 Processing batch {batch_start//batch_size + 1}: files {batch_start+1}-{batch_end}")
+                            
+                            # Load batch of files
+                            batch_dataframes = []
+                            for i, parquet_file in enumerate(batch_files):
+                                df = pd.read_parquet(parquet_file)
+                                batch_dataframes.append(df)
+                            
+                            # Combine batch
+                            if batch_dataframes:
+                                batch_combined = pd.concat(batch_dataframes, ignore_index=True)
+                                all_dataframes.append(batch_combined)
+                                
+                                # Clean up batch dataframes
+                                del batch_dataframes
+                                gc.collect()
+                                
+                                print(f"         ✅ Batch {batch_start//batch_size + 1}: {len(batch_combined):,} samples")
+                        
+                        # Combine all batches
+                        print(f"   🔄 Combining {len(all_dataframes)} batches into final dataset...")
+                        df_combined = pd.concat(all_dataframes, ignore_index=True)
+                        
+                        # Clean up batch dataframes
+                        del all_dataframes
+                        gc.collect()
+                        
+                        print(f"   ✅ Loaded full dataset: {len(df_combined):,} samples")
+                        
+                    elif chunk_size == 1:
                         # Single file approach (ultra-safe)
-                        single_file = chunk_files[0]
+                        single_file = parquet_files[0]
                         print(f"   📂 Loading single file: {single_file.name}")
                         
                         df_combined = pd.read_parquet(single_file)
@@ -166,6 +220,7 @@ def load_cached_imagenet_dataset(cache_path: str, split: str = 'train', subset_s
                         
                     else:
                         # Multi-file approach (memory-conscious)
+                        chunk_files = parquet_files[:chunk_size]
                         dataframes = []
                         print(f"   📂 Loading {len(chunk_files)} files...")
                         
