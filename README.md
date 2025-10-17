@@ -1,365 +1,328 @@
-# 🚀 MosaicML ResNet50 ImageNet Training
+# 🚀 Production-Ready ResNet50 ImageNet Training
 
-A production-ready implementation for training ResNet50 on ImageNet using **MosaicML Composer** with comprehensive optimizations and support for both **Google Colab** and **AWS** environments.
+**High-performance ResNet50 training on ImageNet using MosaicML Composer with GPU optimization, memory-safe data loading, and multi-platform support.**
 
-## 📁 **Project Structure**
+## ⚡ **Quick Start**
+
+### **🎯 Option 1: AWS Training (Recommended for Production)**
+```bash
+# 1. Launch AWS instance with ImageNet data
+./aws/scripts/user-data-training.sh
+
+# 2. Set your API keys
+export HF_TOKEN="your_huggingface_token"
+export WANDB_API_KEY="your_wandb_key"  # Optional
+
+# 3. Choose your configuration:
+./start_validation.sh                    # 1-hour validation (20K samples)
+./start_training.sh aws_a10g_max_config  # Maximum GPU utilization (50K samples)
+```
+
+### **🆓 Option 2: Google Colab (Free GPU)**
+```python
+# In Colab notebook:
+!git clone https://github.com/your-username/mosaic-resnet.git
+%cd mosaic-resnet
+!pip install -r shared/requirements.txt
+
+# Set your token and run
+import os
+os.environ['HF_TOKEN'] = 'your_token'
+!python shared/train.py --use-hf --streaming --data-subset 5000 --epochs 3 --batch-size 64
+```
+
+## 🎛️ **Training Configurations**
+
+| Configuration | Dataset Size | Batch Size | Duration | GPU Memory | Best For |
+|---------------|--------------|------------|----------|------------|----------|
+| `aws_g4dn_validation_config` | 20K samples | 256 | ~1 hour | ~12GB | **Validation & testing** |
+| `aws_a10g_max_config` | 50K samples | 384 | ~1 hour | ~18GB | **Maximum A10G utilization** |
+| `aws_g4dn_12xl_ddp_config` | Full ImageNet | 128×4 | ~20 hours | ~14GB×4 | **Production training** |
+| Custom Colab | 1K-10K samples | 64-128 | 10-60 min | ~8-15GB | **Experimentation** |
+
+## 🛠️ **Usage Examples**
+
+### **🚀 AWS High-Performance Training**
+```bash
+# Optimized 1-hour validation (recommended first run)
+./start_validation.sh
+
+# Maximum A10G GPU utilization  
+./start_training.sh aws_a10g_max_config
+
+# Check GPU optimization opportunities
+./restart_optimized.sh
+
+# Custom configuration
+./start_training.sh aws_g4dn_validation_config
+```
+
+### **💻 Local/Development Training**
+```bash
+cd shared
+
+# Quick test (5 minutes)
+python train.py --use-hf --streaming --data-subset 1000 --epochs 1 --batch-size 64
+
+# Medium validation (30 minutes)  
+python train.py --use-hf --data-subset 10000 --epochs 5 --batch-size 128
+
+# Custom configuration
+python train.py --use-hf --data-subset 25000 --epochs 10 --batch-size 256 \
+  --lr 0.1 --use-mixup --use-cutmix --use-ema --compile-model
+```
+
+### **🔧 GPU Optimization Helper**
+```bash
+# Analyze current GPU utilization and get recommendations
+./restart_optimized.sh
+
+# Example output:
+# 📊 Current GPU Status: 4.4GB/23GB (19% memory), 52% utilization
+# 🚀 MASSIVE HEADROOM DETECTED!
+# → Recommended: aws_a10g_max_config (384 batch size, 50K samples)
+```
+
+## 🏗️ **Project Structure**
 
 ```
 mosaic-resnet/
-├── 📁 colab/              # Google Colab environment
-│   ├── run_validation.py      # Quick validation runner
-│   ├── colab_validation_1hour.py  # 1-hour validation script
-│   ├── colab_validation_1hour.ipynb  # Jupyter notebook
-│   └── ...colab-specific files
-├── 📁 aws/               # AWS production environment  
-│   ├── run_validation.py      # Quick validation runner
-│   ├── scripts/               # AWS setup scripts
-│   └── ...aws-specific files
-├── 📁 shared/            # Common training code
-│   ├── train.py              # Main training script
-│   ├── data_utils.py         # Dataset utilities
-│   ├── model.py              # Model definitions
-│   └── configs/              # Training configurations
-└── README.md             # This file
+├── 🚀 aws/                          # AWS deployment & scripts
+│   ├── scripts/
+│   │   ├── user-data-training.sh       # Complete AWS setup & training
+│   │   └── user-data-download.sh       # ImageNet data download
+│   ├── DEPLOYMENT.md                   # AWS deployment guide
+│   └── HUGGINGFACE_SETUP.md           # Authentication setup
+├── 💻 colab/                        # Google Colab support  
+│   ├── colab_validation_1hour.ipynb    # Jupyter notebook
+│   └── colab_requirements.txt          # Colab dependencies
+├── 🧠 shared/                       # Core training code
+│   ├── train.py                       # Main training script ⭐
+│   ├── data_utils.py                  # Memory-optimized data loading ⭐
+│   ├── model.py                       # ResNet50 model definitions
+│   ├── evaluate.py                    # Model evaluation utilities
+│   └── configs/training_configs.yaml  # Training configurations
+├── 📊 restart_optimized.sh          # GPU optimization helper ⭐
+├── 📋 PROJECT_SUMMARY.md            # Technical project overview
+└── 📖 README.md                     # This file
 ```
 
-## 🎯 **Quick Start**
+## ⚙️ **Command Line Options**
 
-### **Option 1: Google Colab (Free GPU)** 🆓
-
-Perfect for experimentation, validation, and learning MosaicML Composer.
-
-#### **1. Setup Colab Environment**
-```python
-# In Colab cell:
-!git clone https://github.com/your-username/mosaic-resnet.git
-%cd mosaic-resnet
-
-# Install dependencies
-!pip install -r colab/colab_requirements.txt
-```
-
-#### **2. Set HuggingFace Token** 
-```python
-# ImageNet-1k is gated - get token from https://huggingface.co/settings/tokens
-import os
-os.environ['HF_TOKEN'] = 'your_huggingface_token_here'
-```
-
-#### **3. Run Validation (5 minutes setup verification)**
-```python
-%cd colab
-!python run_validation.py
-```
-
-#### **4. Run 1-Hour Training**
-```python
-# Fixed script with improved timeout handling and error reporting
-!python colab_validation_1hour.py --streaming
-
-# Or use the Jupyter notebook: colab_validation_1hour.ipynb
-```
-
-**Expected Output:**
-```
-🚀 Starting Colab Validation Run (1 hour)
-📊 Config: 25k samples, batch_size=128, streaming=True
-🎯 Using 6 Composer algorithms: GradientClipping, MixUp, CutMix, LabelSmoothing, EMA, ChannelsLast, BlurPool
-  1% 15/195 [01:30<28:45, 0.98ba/s] MulticlassAccuracy/train: 0.1234 
-```
-
----
-
-### **Option 2: AWS Production Environment** ☁️
-
-Optimized for full-scale ImageNet training with powerful GPUs.
-
-#### **1. Launch AWS Instance**
+### **Core Arguments**
 ```bash
-# Use provided launch script
-cd aws
-bash launch_training_instance.sh
+--use-hf                 # Use HuggingFace ImageNet dataset (recommended)
+--streaming             # Stream data instead of downloading (faster startup)
+--data-subset N         # Number of samples (or 'full' for complete ImageNet)
+--batch-size N          # Batch size (adjust based on GPU memory)
+--epochs N              # Number of training epochs
+--lr FLOAT              # Learning rate
+--compile-model         # Enable torch.compile() for 15-30% speedup
 ```
 
-#### **2. Setup Environment (Automated)**
-The AWS user-data script automatically:
-- Installs Python, PyTorch, MosaicML Composer
-- Sets up the training environment
-- Handles GPU drivers and dependencies
-
-#### **3. Set HuggingFace Token**
+### **Optimization Flags**
 ```bash
-# SSH into your AWS instance
-export HF_TOKEN='your_huggingface_token_here'
-echo 'export HF_TOKEN="your_token"' >> ~/.bashrc
+--use-mixup             # MixUp data augmentation
+--use-cutmix            # CutMix data augmentation  
+--use-randaugment       # RandAugment (disabled for streaming)
+--use-label-smoothing   # Label smoothing
+--use-ema               # Exponential Moving Average
+--use-channels-last     # Memory-efficient format
+--use-blurpool          # Anti-aliasing for better accuracy
+--precision amp_fp16    # Mixed precision training
 ```
 
-#### **4. Run Validation (10 minutes setup verification)**
+### **Logging & Monitoring**
 ```bash
-cd aws
-python run_validation.py
+--wandb-project NAME    # Weights & Biases project name
+--log-interval N        # Logging frequency (batches)
+--save-interval N       # Checkpoint saving frequency
+--save-folder PATH      # Checkpoint directory
 ```
 
-#### **5. Run Full Production Training**
-```bash
-cd ../shared
+## 🚀 **Performance Optimizations**
 
-# Full ImageNet training (90 epochs)
-python train.py \
-  --batch-size 256 \
-  --epochs 90 \
-  --data-subset full \
-  --wandb-project mosaic-resnet50-production \
-  --save-folder ./checkpoints
+### **🎯 Memory-Safe Data Loading**
+- **Smart chunking**: Automatically adapts to available memory
+- **HF cache support**: Direct loading from local ImageNet cache  
+- **Fallback strategies**: Multiple memory optimization levels
+- **Garbage collection**: Aggressive cleanup prevents OOM errors
 
-# With streaming (faster startup)
-python train.py \
-  --batch-size 256 \
-  --epochs 90 \
-  --data-subset full \
-  --streaming \
-  --wandb-project mosaic-resnet50-production
-```
+### **⚡ GPU Optimizations**
+- **torch.compile()**: 15-30% speed improvement
+- **Mixed precision**: AMP FP16 for memory efficiency
+- **Channels-last**: Optimized memory layout
+- **Dynamic batching**: Automatic batch size optimization
 
-**Expected Output:**
-```
-🚀 Starting AWS Validation Run (2 epochs)
-📊 Config: 50k samples, batch_size=256, streaming=False  
-🎯 Using 7 Composer algorithms: GradientClipping, MixUp, CutMix, RandAugment, LabelSmoothing, EMA, ChannelsLast, BlurPool
-  2% 195/9750 [05:30<4:32:20, 0.59ep/s] MulticlassAccuracy/train: 0.4567
-```
-
----
-
-## ⚙️ **Configuration Options**
-
-### **Streaming vs Non-Streaming**
-
-| **Mode** | **Startup Time** | **Memory Usage** | **Deterministic** | **Best For** |
-|----------|------------------|------------------|-------------------|--------------|
-| **Streaming** (`--streaming`) | Fast (30-90s) | Low | No (sequential) | Colab, quick experiments |
-| **Non-streaming** (default) | Slower (5-15min) | Higher | Yes (random sampling) | Production, reproducible training |
-
-### **Data Subset Options**
-
-```bash
---data-subset tiny     # 1,000 samples (quick testing)
---data-subset small    # 10,000 samples (fast validation)  
---data-subset medium   # 50,000 samples (thorough validation)
---data-subset large    # 250,000 samples (partial training)
---data-subset full     # 1,281,167 samples (full ImageNet)
---data-subset 25000    # Custom number
-```
-
-### **Composer Algorithms Available**
-
-```bash
-# Enable/disable specific algorithms:
---use-mixup            # MixUp data augmentation
---use-cutmix           # CutMix data augmentation  
---use-randaugment      # RandAugment (disabled for streaming)
---use-label-smoothing  # Label smoothing
---use-ema              # Exponential Moving Average
---use-channels-last    # Channels-last memory format
---use-blurpool         # BlurPool anti-aliasing
---use-sam              # Sharpness-Aware Minimization
---use-swa              # Stochastic Weight Averaging
-```
-
----
+### **📊 Training Features**
+- **Multiple algorithms**: MixUp, CutMix, EMA, Label Smoothing
+- **Learning rate scheduling**: Cosine annealing with warmup
+- **Checkpointing**: Automatic model saving and resuming
+- **Comprehensive logging**: WandB integration with system monitoring
 
 ## 🔧 **Troubleshooting**
 
-### **Training Stops with Errors**
+### **🚨 Common Issues & Solutions**
 
-#### **"Training error: 0" (Signal Issue)**
-```
-❌ Error: Training stopped at 2% with "Training error: 0"
-```
-**Root Cause:** Signal-based timeout conflicts in Colab environment.
-**Solution:** Fixed - now uses polling-based timeout with comprehensive error handling.
-
-#### **Training Runs Over 60 Minutes (Timeout Issue)**
-```
-❌ Issue: Training runs for 71+ minutes instead of exactly 60 minutes
-```
-**Root Cause:** `trainer.fit()` blocking call doesn't check timeout during training.
-**Solution:** Fixed - added TimeoutCallback that checks timeout every 10 batches and stops training precisely at 60 minutes.
-
-#### **KeyError: 0 / Cache Issues (Streaming Dataset)**
-```
-❌ Error: KeyError: 0 in streaming dataset cache
-❌ Error: CACHE BUG: Failed to cache item at index 0
-```
-**Root Cause:** DataLoader epoch restarts with streaming datasets - requests index 0 when iterator is far ahead.
-**Solution:** Fixed - added epoch restart detection and proper iterator reset handling.
-
-**Both issues fixed in updated scripts:**
-```python
-# In Colab (all fixes applied):
-%cd colab  
-!python colab_validation_1hour.py --streaming
-
-# In AWS (same fixes now applied):
-python aws/run_validation.py
-python shared/train.py --streaming --batch-size 256 --epochs 90
-```
-
-### **Authentication Error**
-```
-❌ Error: 401 Unauthorized
-```
-**Fix:** Get HuggingFace token and set `HF_TOKEN` environment variable.
-1. Visit: https://huggingface.co/datasets/imagenet-1k
-2. Request access (approval takes 1-2 days)  
-3. Get token: https://huggingface.co/settings/tokens
-4. Set token: `export HF_TOKEN='your_token'`
-
-### **Shape Mismatch Error**
-```
-❌ Error: output with shape [1, 224, 224] doesn't match [3, 224, 224]
-```
-**Fix:** Automatically handled by RGB conversion in `data_utils.py`.
-
-### **Performance Issues**
-```
-Training stuck at: 0% 0/9750 [00:00<?, ?ba/s]
-```
-**Fix:** Use streaming mode or reduce `num_workers`:
+#### **Out of Memory (OOM)**
 ```bash
-python train.py --streaming --num-workers 2
+# Symptoms: CUDA out of memory, process killed
+# Solutions:
+./restart_optimized.sh                    # Check GPU utilization
+python train.py --batch-size 64           # Reduce batch size
+python train.py --num-workers 2           # Reduce data workers
+python train.py --data-subset 5000        # Use smaller dataset
 ```
 
-### **Memory Issues (Colab)**
-```
-❌ RuntimeError: CUDA out of memory
-```
-**Fix:** Reduce batch size:
+#### **Slow Training / Low GPU Utilization**
 ```bash
-python colab_validation_1hour.py --batch-size 64
+# Check current utilization
+./restart_optimized.sh
+
+# If <70% GPU utilization, optimize:
+./start_training.sh aws_a10g_max_config   # Use optimized config
+python train.py --compile-model            # Enable torch.compile
+python train.py --batch-size 256          # Increase batch size
+python train.py --num-workers 8           # More data workers
 ```
 
----
-
-## 📊 **Performance Benchmarks**
-
-### **Colab (T4 GPU)**
-- **Batch Size:** 128 (optimal for T4)
-- **Training Speed:** ~2-5 batches/second
-- **Memory Usage:** ~15GB/16GB
-- **1-Hour Training:** ~195 batches, 25k samples
-
-### **AWS (g4dn.xlarge)**  
-- **Batch Size:** 256 (optimal for T4)
-- **Training Speed:** ~3-7 batches/second
-- **Memory Usage:** ~14GB/16GB
-- **Full Training:** ~90 hours for 90 epochs
-
-### **AWS (g4dn.12xlarge - 4xT4)**
-- **Batch Size:** 1024 (256 per GPU)
-- **Training Speed:** ~12-25 batches/second  
-- **Memory Usage:** ~56GB/64GB total
-- **Full Training:** ~20-25 hours for 90 epochs
-
----
-
-## 🛠️ **Advanced Usage**
-
-### **Custom Configuration**
+#### **Authentication Errors**
 ```bash
-# Use predefined configurations
-python train.py --config shared/configs/training_configs.yaml --config-name aws_g4dn_12xl_ddp_config
+# Get HuggingFace token: https://huggingface.co/settings/tokens
+export HF_TOKEN="your_token_here"
+echo 'export HF_TOKEN="your_token"' >> ~/.bashrc
 
-# Override specific parameters
-python train.py --batch-size 512 --lr 0.2 --epochs 120
+# Request ImageNet access: https://huggingface.co/datasets/imagenet-1k
+# (Usually approved within 24-48 hours)
 ```
 
-### **Learning Rate Finder**
+#### **Data Loading Issues**
 ```bash
-# Find optimal learning rate
-python train.py --find-lr --data-subset small
+# Use streaming for faster startup
+python train.py --use-hf --streaming
+
+# Or use local cache (AWS instances with mounted data)  
+python train.py --use-hf  # Automatically detects local cache
 ```
 
-### **Distributed Training (Multi-GPU)**
+## 📊 **Expected Performance**
+
+### **Validation Runs (1 hour)**
+- **Loss**: Decreases from ~6.9 to ~4.5
+- **Accuracy**: Improves from ~0.1% to ~15-25%
+- **GPU Utilization**: 75-95% (optimized configs)
+- **Memory Usage**: 10-20GB depending on batch size
+
+### **Full Training (90 epochs)**
+- **Top-1 Accuracy**: 76-78% on ImageNet validation
+- **Top-5 Accuracy**: 93-95% on ImageNet validation
+- **Training Time**: 15-25 hours (4x T4 GPUs)
+- **Final Loss**: 0.8-1.2 cross-entropy
+
+### **Hardware Performance**
+| GPU | Batch Size | Speed | Memory | Training Time (90 epochs) |
+|-----|------------|-------|--------|---------------------------|
+| T4 (Colab) | 64-128 | 2-4 ba/s | 8-15GB | ~80-120 hours |
+| T4 (AWS g4dn.xlarge) | 128-256 | 3-6 ba/s | 12-16GB | ~60-80 hours |
+| A10G (AWS g5.xlarge) | 256-384 | 8-12 ba/s | 15-20GB | ~25-35 hours |
+| 4× T4 (AWS g4dn.12xlarge) | 512-1024 | 15-25 ba/s | 50-60GB | ~15-25 hours |
+
+## 🎯 **Quick Validation Checklist**
+
+### **✅ First-Time Setup**
+1. **Get HuggingFace token**: https://huggingface.co/settings/tokens
+2. **Request ImageNet access**: https://huggingface.co/datasets/imagenet-1k  
+3. **Set environment**: `export HF_TOKEN="your_token"`
+4. **Run validation**: `./start_validation.sh` (AWS) or use Colab notebook
+
+### **✅ Optimization Check**
+1. **Check GPU usage**: `./restart_optimized.sh`
+2. **If low utilization**: Use `aws_a10g_max_config` or increase batch size
+3. **Monitor training**: Look for steady loss decrease and accuracy improvement
+4. **Verify logs**: Ensure algorithms are active and no errors occur
+
+### **✅ Production Training**
+1. **Validate first**: Always run 1-hour validation before full training
+2. **Use optimized config**: `aws_g4dn_12xl_ddp_config` for multi-GPU
+3. **Monitor progress**: Set up WandB for experiment tracking
+4. **Save checkpoints**: Use `--save-interval 5ep` for regular saves
+
+## 🚀 **Advanced Features**
+
+### **🔥 GPU Optimization Modes**
 ```bash
-# DDP training on multiple GPUs
+# Conservative (safe for any GPU)
+python train.py --batch-size 64 --num-workers 2
+
+# Balanced (good performance/safety ratio)  
+python train.py --batch-size 128 --num-workers 4 --compile-model
+
+# Aggressive (maximum performance)
+python train.py --batch-size 256 --num-workers 8 --compile-model --use-channels-last
+```
+
+### **🧪 Experiment Tracking**
+```bash
+# Basic WandB integration
+python train.py --wandb-project "my-imagenet-experiments"
+
+# Advanced tracking with tags
+python train.py \
+  --wandb-project "resnet50-optimization" \
+  --wandb-entity "my-team" \
+  --experiment-name "baseline-run-1" \
+  --log-interval 50
+```
+
+### **⚡ Multi-GPU Training**
+```bash
+# Data Parallel (single node)
+python train.py --batch-size 512  # Automatically uses all available GPUs
+
+# Distributed Data Parallel (recommended)
 torchrun --nproc_per_node=4 train.py --batch-size 1024
 ```
 
-### **WandB Integration**
-```bash
-# Track experiments with Weights & Biases
-python train.py --wandb-project my-project --wandb-group experiment-1
-```
+## 📚 **Additional Resources**
 
----
-
-## 📚 **Documentation**
-
-- **[Colab README](colab/COLAB_README.md)** - Detailed Colab setup and troubleshooting
-- **[AWS Training Fixes](aws/AWS_TRAINING_FIXES.md)** - Production fixes applied to AWS scripts
-- **[Deployment Guide](aws/DEPLOYMENT.md)** - AWS infrastructure and deployment  
+- **[AWS Deployment Guide](aws/DEPLOYMENT.md)** - Complete AWS setup and optimization
+- **[Project Summary](PROJECT_SUMMARY.md)** - Technical architecture and decisions  
 - **[HuggingFace Setup](aws/HUGGINGFACE_SETUP.md)** - Authentication and dataset access
-- **[Validation Quickstart](shared/VALIDATION_QUICKSTART.md)** - Quick validation procedures
-
----
-
-## 🎯 **Expected Results**
-
-### **Validation Runs**
-- **Colab Validation:** Should complete without errors, showing steady progress
-- **AWS Validation:** Should utilize full GPU, faster than Colab
-- **Both:** Should show algorithm application and reasonable loss curves
-
-### **Full Training Results**  
-- **Top-1 Accuracy:** ~76-78% (ImageNet validation)
-- **Top-5 Accuracy:** ~93-95% (ImageNet validation)
-- **Training Time:** 20-90 hours (depending on hardware)
-- **Final Loss:** ~0.8-1.2 (cross-entropy)
-
----
-
-## 🚀 **Getting Started Checklist**
-
-### **For Colab Users:**
-- [ ] Clone repository in Colab
-- [ ] Install requirements: `pip install -r colab/colab_requirements.txt`  
-- [ ] Set HF_TOKEN: `os.environ['HF_TOKEN'] = 'your_token'`
-- [ ] Run validation: `python colab/run_validation.py`
-- [ ] Start training: `python colab/colab_validation_1hour.py --streaming`
-
-### **For AWS Users:**  
-- [ ] Launch AWS instance: `bash aws/launch_training_instance.sh`
-- [ ] SSH into instance and set token: `export HF_TOKEN='your_token'`
-- [ ] Run validation: `python aws/run_validation.py`
-- [ ] Start production training: `python shared/train.py --batch-size 256 --epochs 90 --data-subset full`
-
----
+- **[Colab Notebook](colab_validation_1hour.ipynb)** - Interactive training experience
 
 ## 🤝 **Contributing**
 
 1. Fork the repository
-2. Create your feature branch: `git checkout -b feature/amazing-feature`
-3. Commit your changes: `git commit -m 'Add amazing feature'`
-4. Push to the branch: `git push origin feature/amazing-feature`
-5. Open a Pull Request
-
----
+2. Create feature branch: `git checkout -b feature/amazing-optimization`
+3. Make your changes with tests
+4. Commit: `git commit -m 'Add amazing optimization'`
+5. Push: `git push origin feature/amazing-optimization`
+6. Create Pull Request
 
 ## 📄 **License**
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+MIT License - see LICENSE file for details.
 
 ---
 
-## 🙏 **Acknowledgments**
+## 🎉 **Ready to Train ImageNet?**
 
-- **MosaicML** for the excellent Composer library
-- **HuggingFace** for the datasets and model hub
-- **PyTorch** team for the deep learning framework
-- **Google Colab** for free GPU access
-- **AWS** for scalable cloud infrastructure
+### **🚀 Quick Start Commands:**
 
----
+```bash
+# AWS (Recommended)
+./start_validation.sh              # 1-hour validation
+./restart_optimized.sh            # Check GPU optimization
+./start_training.sh aws_a10g_max_config  # Maximum performance
 
-**🎉 Ready to train ImageNet? Choose your platform and start training!** 🚀
+# Local/Development  
+python shared/train.py --use-hf --streaming --data-subset 5000 --epochs 3
+```
+
+### **💡 Pro Tips:**
+- **Always validate first**: Run 1-hour validation before full training
+- **Optimize GPU usage**: Use `./restart_optimized.sh` to maximize performance  
+- **Monitor training**: Set up WandB for experiment tracking
+- **Save checkpoints**: Regular saves prevent losing progress
+
+**🎯 Achieve 76%+ ImageNet accuracy with optimized, production-ready training!** 🚀
