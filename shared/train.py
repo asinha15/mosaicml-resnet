@@ -5,8 +5,12 @@ Includes comprehensive optimizations and configurations for different scenarios.
 import os
 import argparse
 import traceback
+import warnings
 from pathlib import Path
 import torch
+
+# Suppress PyTorch deprecation warnings for cleaner output
+warnings.filterwarnings("ignore", category=UserWarning, module="torch.overrides")
 import wandb
 from composer import Trainer
 from composer.algorithms import (
