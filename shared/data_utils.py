@@ -67,7 +67,7 @@ def find_cached_imagenet_data(hf_home: str, split: str = 'train') -> Optional[st
     return None
 
 
-def load_cached_imagenet_dataset(cache_path: str, split: str = 'train') -> Optional[Dataset]:
+def load_cached_imagenet_dataset(cache_path: str, split: str = 'train', subset_size: Optional[int] = None) -> Optional[Dataset]:
     """
     Load ImageNet dataset directly from cached files.
     
@@ -126,16 +126,28 @@ def load_cached_imagenet_dataset(cache_path: str, split: str = 'train') -> Optio
                     
                     print(f"   📊 Sample file: {sample_count:,} samples, {memory_usage:.1f} MB")
                     
-                    # Ultra-conservative single file approach to avoid memory issues
-                    # Even small chunks fail during Dataset.from_pandas() conversion
-                    print(f"   🔧 Using single-file approach to avoid conversion memory issues")
-                    chunk_size = 1  # Load only ONE file at a time
+                    # Smart chunking based on requested subset size
+                    # Balance memory safety with dataset size requirements
+                    estimated_samples_needed = subset_size or 20000  # Use requested size or default
+                    samples_per_file = max(1, sample_count)
+                    files_needed = min(len(parquet_files), max(1, estimated_samples_needed // samples_per_file))
+                    
+                    if files_needed == 1:
+                        print(f"   🔧 Using single-file approach (sufficient for small requests)")
+                        chunk_size = 1
+                    elif files_needed <= 3:
+                        print(f"   🔧 Using small multi-file approach ({files_needed} files for larger dataset)")
+                        chunk_size = files_needed
+                    else:
+                        print(f"   🔧 Using conservative chunking approach (need {files_needed} files, using 4)")
+                        chunk_size = 4  # Conservative but reasonable
+                    
+                    print(f"   📊 Will load {chunk_size} files (estimated {chunk_size * samples_per_file:,} samples)")
                     
                     print(f"   🔧 Using optimized chunk size: {chunk_size} files (memory efficient)")
                     
-                    # Load single file approach (ultra-safe)
-                    single_file = parquet_files[0]  # Use first file only
-                    print(f"   📂 Loading single file: {single_file.name}")
+                    # Load files based on calculated chunk size
+                    chunk_files = parquet_files[:chunk_size]
                     
                     # Clean up sample file memory first
                     del df_sample
@@ -144,43 +156,65 @@ def load_cached_imagenet_dataset(cache_path: str, split: str = 'train') -> Optio
                     import gc
                     gc.collect()
                     
-                    # Load the single file
-                    df_single = pd.read_parquet(single_file)
-                    print(f"   ✅ Loaded single file: {len(df_single):,} samples")
-                    
-                    # Convert to HuggingFace Dataset (much smaller, safer)
-                    print(f"   🔄 Converting single file to HuggingFace Dataset...")
-                    try:
-                        dataset = Dataset.from_pandas(df_single)
+                    if chunk_size == 1:
+                        # Single file approach (ultra-safe)
+                        single_file = chunk_files[0]
+                        print(f"   📂 Loading single file: {single_file.name}")
                         
-                        # Free pandas DataFrame immediately
-                        del df_single
+                        df_combined = pd.read_parquet(single_file)
+                        print(f"   ✅ Loaded single file: {len(df_combined):,} samples")
+                        
+                    else:
+                        # Multi-file approach (memory-conscious)
+                        dataframes = []
+                        print(f"   📂 Loading {len(chunk_files)} files...")
+                        
+                        for i, parquet_file in enumerate(chunk_files):
+                            print(f"      📄 File {i+1}/{len(chunk_files)}: {parquet_file.name}")
+                            df = pd.read_parquet(parquet_file)
+                            dataframes.append(df)
+                        
+                        print(f"   🔄 Combining {len(dataframes)} dataframes...")
+                        df_combined = pd.concat(dataframes, ignore_index=True)
+                        
+                        # Free individual dataframes immediately
+                        del dataframes
                         gc.collect()
                         
-                        print(f"   🎉 Successfully loaded {len(dataset):,} samples (single-file mode)")
+                        print(f"   ✅ Loaded combined files: {len(df_combined):,} samples")
+                    
+                    # Convert to HuggingFace Dataset (memory-safe)
+                    print(f"   🔄 Converting to HuggingFace Dataset...")
+                    try:
+                        dataset = Dataset.from_pandas(df_combined)
+                        
+                        # Free pandas DataFrame immediately
+                        del df_combined
+                        gc.collect()
+                        
+                        print(f"   🎉 Successfully loaded {len(dataset):,} samples")
                         return dataset
                         
                     except Exception as conversion_error:
-                        print(f"   ❌ Single file conversion failed: {conversion_error}")
-                        print(f"   🔄 This indicates a fundamental dataset format issue")
+                        print(f"   ❌ Dataset conversion failed: {conversion_error}")
+                        print(f"   🔄 Trying with smaller subset...")
                         
-                        # Last resort: try with even smaller subset from single file
-                        print(f"   🔄 Trying half of single file...")
+                        # Try with half the data if conversion fails
                         try:
-                            half_df = df_single.sample(n=len(df_single)//2, random_state=42)
-                            del df_single
+                            half_df = df_combined.sample(n=len(df_combined)//2, random_state=42)
+                            del df_combined
                             gc.collect()
                             
                             dataset = Dataset.from_pandas(half_df)
                             del half_df
                             gc.collect()
                             
-                            print(f"   ✅ Converted half-file subset: {len(dataset):,} samples")
+                            print(f"   ✅ Converted smaller subset: {len(dataset):,} samples")
                             return dataset
                             
                         except Exception as half_error:
-                            print(f"   ❌ Even half-file conversion failed: {half_error}")
-                            del df_single  # Clean up if still exists
+                            print(f"   ❌ Even half-size conversion failed: {half_error}")
+                            del df_combined  # Clean up if still exists
                             gc.collect()
                             return None
                         
@@ -293,7 +327,7 @@ class ImageNetHF(VisionDataset):
                 
                 if cache_path:
                     print(f"   💾 Loading from cached files (no authentication needed)")
-                    cached_dataset = load_cached_imagenet_dataset(cache_path, split)
+                    cached_dataset = load_cached_imagenet_dataset(cache_path, split, subset_size)
                     
                     if cached_dataset is not None:
                         self.dataset = cached_dataset

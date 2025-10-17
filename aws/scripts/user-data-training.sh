@@ -111,6 +111,9 @@ export HF_HOME="/mnt/imagenet-data/hf_home"
 export HF_HUB_CACHE="/mnt/imagenet-data/hf_home/hub"
 export TRANSFORMERS_CACHE="/mnt/imagenet-data/transformers_cache"
 # Note: HF_DATASETS_OFFLINE will be managed automatically by the training code
+
+# Set up Wandb API key (replace with your actual key)
+# export WANDB_API_KEY="your_wandb_api_key_here"
 echo "🔧 Set HF_HOME=/mnt/imagenet-data/hf_home"
 echo "🔧 HuggingFace cache configured for local ImageNet data"
 
@@ -121,15 +124,15 @@ echo "🎯 Using configuration: $CONFIG_NAME"
 # Set training parameters based on config
 case $CONFIG_NAME in
     "aws_g4dn_validation_config")
-        echo "📊 Ultra-Safe Validation Configuration (Single-File Mode)"
+        echo "📊 1-Hour Validation Configuration (Memory-Safe)"
         ARGS="--model-type torchvision \
-              --data-subset 4000 \
-              --batch-size 32 \
+              --data-subset 20000 \
+              --batch-size 64 \
               --image-size 224 \
-              --num-workers 2 \
+              --num-workers 4 \
               --use-hf \
-              --epochs 2 \
-              --lr 0.05 \
+              --epochs 12 \
+              --lr 0.1 \
               --weight-decay 1e-4 \
               --momentum 0.9 \
               --optimizer sgd \
@@ -142,9 +145,9 @@ case $CONFIG_NAME in
               --use-blurpool \
               --device auto \
               --precision amp_fp16 \
-              --save-interval 1ep \
+              --save-interval 2ep \
               --wandb-project mosaic-resnet50-phase2-validation \
-              --log-interval 25ba"
+              --log-interval 50ba"
         ;;
     "aws_g4dn_12xl_ddp_config")
         echo "📊 Full Training Configuration (4x T4, Local HF Cache)"
@@ -222,7 +225,7 @@ set -e
 echo "🚀 Starting 1-Hour Validation Test..."
 echo "📊 Configuration: aws_g4dn_validation_config"
 echo "⏱️  Target duration: ~1 hour"
-echo "📦 Dataset: 25K samples (2% of ImageNet)"
+echo "📦 Dataset: 20K samples (1.5% of ImageNet), 12 epochs"
 
 # Run the training with validation config
 ./start_training.sh aws_g4dn_validation_config
@@ -373,7 +376,7 @@ Quick Start Commands:
    ./start_training.sh [config_name]
 
 Available Configurations:
-- aws_g4dn_validation_config  (1-hour test, 25K samples)
+- aws_g4dn_validation_config  (1-hour test, 20K samples, 12 epochs)
 - aws_g4dn_12xl_ddp_config   (full training, 4x GPU)
 - colab_config               (tiny test, 1K samples)
 
