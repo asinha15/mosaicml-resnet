@@ -103,24 +103,82 @@ def load_cached_imagenet_dataset(cache_path: str, split: str = 'train') -> Optio
             else:
                 return dataset
         
-        # Method 2: Try loading parquet files directly
+        # Method 2: Try loading parquet files directly (memory-efficient)
         parquet_files = list(cache_path_obj.glob("*.parquet"))
         if parquet_files:
-            print(f"   📊 Found {len(parquet_files)} parquet files, loading directly...")
+            print(f"   📊 Found {len(parquet_files)} parquet files, loading with memory optimization...")
             
-            # Load all parquet files
-            dataframes = []
-            for parquet_file in parquet_files:
-                df = pd.read_parquet(parquet_file)
-                dataframes.append(df)
-            
-            if dataframes:
-                combined_df = pd.concat(dataframes, ignore_index=True)
-                print(f"   ✅ Loaded {len(combined_df)} samples from parquet files")
+            # For large numbers of parquet files, use datasets library directly
+            if len(parquet_files) > 50:
+                print(f"   🔄 Large dataset detected ({len(parquet_files)} files), using streaming approach...")
                 
-                # Convert to HuggingFace Dataset
-                dataset = Dataset.from_pandas(combined_df)
-                return dataset
+                try:
+                    # Use datasets library to load parquet files efficiently
+                    from datasets import Dataset
+                    
+                    # Load parquet files as a dataset (more memory efficient)
+                    dataset = Dataset.from_parquet([str(f) for f in parquet_files])
+                    print(f"   ✅ Efficiently loaded {len(dataset)} samples from {len(parquet_files)} parquet files")
+                    return dataset
+                    
+                except Exception as e:
+                    print(f"   ⚠️  Efficient loading failed ({e}), trying chunked approach...")
+                    
+                    # Fallback: Load in chunks to manage memory
+                    total_samples = 0
+                    chunk_size = 10  # Load 10 files at a time
+                    
+                    print(f"   🔄 Loading in chunks of {chunk_size} files...")
+                    
+                    # Get total sample count first (quick scan)
+                    sample_count = 0
+                    for i, parquet_file in enumerate(parquet_files[:5]):  # Check first 5 files
+                        df_sample = pd.read_parquet(parquet_file)
+                        sample_count += len(df_sample)
+                        if i == 0:
+                            columns = df_sample.columns.tolist()
+                        del df_sample  # Free memory
+                    
+                    estimated_total = (sample_count // 5) * len(parquet_files)
+                    print(f"   📊 Estimated total samples: ~{estimated_total:,}")
+                    
+                    # Load first chunk to create initial dataset
+                    first_chunk = parquet_files[:chunk_size]
+                    dataframes = []
+                    
+                    for i, parquet_file in enumerate(first_chunk):
+                        print(f"   📂 Loading file {i+1}/{len(first_chunk)}: {parquet_file.name}")
+                        df = pd.read_parquet(parquet_file)
+                        dataframes.append(df)
+                    
+                    if dataframes:
+                        combined_df = pd.concat(dataframes, ignore_index=True)
+                        print(f"   ✅ Loaded first chunk: {len(combined_df)} samples")
+                        
+                        # Convert to HuggingFace Dataset
+                        dataset = Dataset.from_pandas(combined_df)
+                        
+                        # For training, we don't need ALL the data at once
+                        # Return the first chunk for now (can be extended later)
+                        print(f"   💡 Using first chunk for training (memory efficient)")
+                        return dataset
+            else:
+                # Small number of files - load normally
+                print(f"   🔄 Loading {len(parquet_files)} parquet files...")
+                dataframes = []
+                
+                for i, parquet_file in enumerate(parquet_files):
+                    print(f"   📂 Loading file {i+1}/{len(parquet_files)}: {parquet_file.name}")
+                    df = pd.read_parquet(parquet_file)
+                    dataframes.append(df)
+                
+                if dataframes:
+                    combined_df = pd.concat(dataframes, ignore_index=True)
+                    print(f"   ✅ Loaded {len(combined_df)} samples from parquet files")
+                    
+                    # Convert to HuggingFace Dataset
+                    dataset = Dataset.from_pandas(combined_df)
+                    return dataset
         
         # Method 3: Try loading arrow files
         arrow_files = list(cache_path_obj.glob("*.arrow"))

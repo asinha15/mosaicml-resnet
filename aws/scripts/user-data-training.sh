@@ -123,13 +123,12 @@ case $CONFIG_NAME in
     "aws_g4dn_validation_config")
         echo "📊 1-Hour Validation Configuration (Local HF Cache)"
         ARGS="--model-type torchvision \
-              --compile-model \
-              --data-subset 25000 \
-              --batch-size 256 \
+              --data-subset 10000 \
+              --batch-size 128 \
               --image-size 224 \
-              --num-workers 8 \
+              --num-workers 4 \
               --use-hf \
-              --epochs 10 \
+              --epochs 5 \
               --lr 0.05 \
               --weight-decay 1e-4 \
               --momentum 0.9 \
@@ -143,9 +142,9 @@ case $CONFIG_NAME in
               --use-blurpool \
               --device auto \
               --precision amp_fp16 \
-              --save-interval 2ep \
+              --save-interval 1ep \
               --wandb-project mosaic-resnet50-phase2-validation \
-              --log-interval 50ba"
+              --log-interval 25ba"
         ;;
     "aws_g4dn_12xl_ddp_config")
         echo "📊 Full Training Configuration (4x T4, Local HF Cache)"
