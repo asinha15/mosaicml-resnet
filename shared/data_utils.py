@@ -126,69 +126,63 @@ def load_cached_imagenet_dataset(cache_path: str, split: str = 'train') -> Optio
                     
                     print(f"   📊 Sample file: {sample_count:,} samples, {memory_usage:.1f} MB")
                     
-                    # Conservative chunk sizes to avoid memory issues during conversion
-                    # The parquet files are small, but images decode to much larger size
-                    if memory_usage < 5:  # Very small files
-                        chunk_size = 8   # Load reasonable number
-                    elif memory_usage < 20:  # Small files  
-                        chunk_size = 5   # Load moderate number
-                    else:  # Larger files
-                        chunk_size = 3   # Load fewer files
+                    # Ultra-conservative single file approach to avoid memory issues
+                    # Even small chunks fail during Dataset.from_pandas() conversion
+                    print(f"   🔧 Using single-file approach to avoid conversion memory issues")
+                    chunk_size = 1  # Load only ONE file at a time
                     
                     print(f"   🔧 Using optimized chunk size: {chunk_size} files (memory efficient)")
                     
-                    # Load optimized chunk
-                    chunk_files = parquet_files[:chunk_size]
-                    dataframes = []
+                    # Load single file approach (ultra-safe)
+                    single_file = parquet_files[0]  # Use first file only
+                    print(f"   📂 Loading single file: {single_file.name}")
                     
-                    for i, parquet_file in enumerate(chunk_files):
-                        print(f"   📂 Loading file {i+1}/{len(chunk_files)}: {parquet_file.name}")
-                        df = pd.read_parquet(parquet_file)
-                        dataframes.append(df)
-                        
-                        # Clean up sample file memory
-                        if i == 0:
-                            del df_sample
+                    # Clean up sample file memory first
+                    del df_sample
                     
-                    if dataframes:
-                        print(f"   🔄 Combining {len(dataframes)} dataframes...")
-                        combined_df = pd.concat(dataframes, ignore_index=True)
-                        print(f"   ✅ Loaded optimized chunk: {len(combined_df):,} samples")
+                    # Force garbage collection
+                    import gc
+                    gc.collect()
+                    
+                    # Load the single file
+                    df_single = pd.read_parquet(single_file)
+                    print(f"   ✅ Loaded single file: {len(df_single):,} samples")
+                    
+                    # Convert to HuggingFace Dataset (much smaller, safer)
+                    print(f"   🔄 Converting single file to HuggingFace Dataset...")
+                    try:
+                        dataset = Dataset.from_pandas(df_single)
                         
-                        # Free individual dataframes immediately
-                        del dataframes
-                        
-                        # Force garbage collection to free memory
-                        import gc
+                        # Free pandas DataFrame immediately
+                        del df_single
                         gc.collect()
                         
-                        # Convert to HuggingFace Dataset with memory monitoring
-                        print(f"   🔄 Converting to HuggingFace Dataset (memory-aware)...")
+                        print(f"   🎉 Successfully loaded {len(dataset):,} samples (single-file mode)")
+                        return dataset
+                        
+                    except Exception as conversion_error:
+                        print(f"   ❌ Single file conversion failed: {conversion_error}")
+                        print(f"   🔄 This indicates a fundamental dataset format issue")
+                        
+                        # Last resort: try with even smaller subset from single file
+                        print(f"   🔄 Trying half of single file...")
                         try:
-                            dataset = Dataset.from_pandas(combined_df)
-                            
-                            # Free pandas DataFrame immediately after conversion
-                            del combined_df
-                            gc.collect()  # Force cleanup
-                            
-                            print(f"   🎉 Successfully loaded {len(dataset):,} samples for training")
-                            return dataset
-                            
-                        except Exception as conversion_error:
-                            print(f"   ❌ Dataset conversion failed: {conversion_error}")
-                            print(f"   🔄 Trying smaller subset to avoid memory issues...")
-                            
-                            # Try with just half the data if conversion fails
-                            smaller_df = combined_df.sample(n=len(combined_df)//2, random_state=42)
-                            del combined_df
+                            half_df = df_single.sample(n=len(df_single)//2, random_state=42)
+                            del df_single
                             gc.collect()
                             
-                            dataset = Dataset.from_pandas(smaller_df)
-                            del smaller_df
+                            dataset = Dataset.from_pandas(half_df)
+                            del half_df
                             gc.collect()
                             
-                            print(f"   ✅ Converted smaller subset: {len(dataset):,} samples")
+                            print(f"   ✅ Converted half-file subset: {len(dataset):,} samples")
                             return dataset
+                            
+                        except Exception as half_error:
+                            print(f"   ❌ Even half-file conversion failed: {half_error}")
+                            del df_single  # Clean up if still exists
+                            gc.collect()
+                            return None
                         
                 except Exception as chunk_error:
                     print(f"   ❌ Optimized chunked loading failed: {chunk_error}")

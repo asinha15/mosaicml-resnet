@@ -121,14 +121,14 @@ echo "🎯 Using configuration: $CONFIG_NAME"
 # Set training parameters based on config
 case $CONFIG_NAME in
     "aws_g4dn_validation_config")
-        echo "📊 Conservative Validation Configuration (Memory-Safe)"
+        echo "📊 Ultra-Safe Validation Configuration (Single-File Mode)"
         ARGS="--model-type torchvision \
-              --data-subset 10000 \
-              --batch-size 64 \
+              --data-subset 4000 \
+              --batch-size 32 \
               --image-size 224 \
-              --num-workers 4 \
+              --num-workers 2 \
               --use-hf \
-              --epochs 3 \
+              --epochs 2 \
               --lr 0.05 \
               --weight-decay 1e-4 \
               --momentum 0.9 \
