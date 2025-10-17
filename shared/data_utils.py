@@ -171,107 +171,119 @@ def load_cached_imagenet_dataset(cache_path: str, split: str = 'train', subset_s
                     gc.collect()
                     
                     if subset_size is None and len(parquet_files) > 100:
-                        # Full dataset with many files - use batch processing to avoid memory issues
-                        print(f"   🔄 Loading full dataset in memory-safe batches...")
+                        # Full dataset with many files - use HuggingFace native loading (memory efficient)
+                        print(f"   🔄 Using HuggingFace native parquet loading for full dataset...")
+                        print(f"   💡 This avoids loading 160GB+ data into pandas memory")
                         
-                        all_dataframes = []
-                        batch_size = 20  # Process 20 files at a time
+                        # Convert Path objects to strings for HuggingFace
+                        parquet_paths = [str(f) for f in parquet_files]
                         
-                        for batch_start in range(0, len(parquet_files), batch_size):
-                            batch_end = min(batch_start + batch_size, len(parquet_files))
-                            batch_files = parquet_files[batch_start:batch_end]
+                        try:
+                            # Use HuggingFace's efficient parquet loading
+                            print(f"   🔄 Loading {len(parquet_paths)} parquet files directly with HuggingFace...")
+                            dataset = Dataset.from_parquet(parquet_paths)
                             
-                            print(f"      🔄 Processing batch {batch_start//batch_size + 1}: files {batch_start+1}-{batch_end}")
+                            print(f"   ✅ Successfully loaded full dataset: {len(dataset):,} samples")
+                            print(f"   💾 Memory efficient: HuggingFace handles large datasets internally")
+                            return dataset
                             
-                            # Load batch of files
-                            batch_dataframes = []
-                            for i, parquet_file in enumerate(batch_files):
-                                df = pd.read_parquet(parquet_file)
-                                batch_dataframes.append(df)
+                        except Exception as hf_error:
+                            print(f"   ❌ HuggingFace native loading failed: {hf_error}")
+                            print(f"   🔄 Falling back to streaming approach...")
                             
-                            # Combine batch
-                            if batch_dataframes:
-                                batch_combined = pd.concat(batch_dataframes, ignore_index=True)
-                                all_dataframes.append(batch_combined)
+                            # Fallback: Use load_dataset with parquet files
+                            try:
+                                from datasets import load_dataset
+                                dataset = load_dataset(
+                                    "parquet", 
+                                    data_files=parquet_paths,
+                                    split="train"
+                                )
+                                print(f"   ✅ Fallback successful: {len(dataset):,} samples")
+                                return dataset
                                 
-                                # Clean up batch dataframes
-                                del batch_dataframes
-                                gc.collect()
+                            except Exception as fallback_error:
+                                print(f"   ❌ Fallback also failed: {fallback_error}")
+                                print(f"   ⚠️  Will load subset instead to avoid OOM")
                                 
-                                print(f"         ✅ Batch {batch_start//batch_size + 1}: {len(batch_combined):,} samples")
-                        
-                        # Combine all batches
-                        print(f"   🔄 Combining {len(all_dataframes)} batches into final dataset...")
-                        df_combined = pd.concat(all_dataframes, ignore_index=True)
-                        
-                        # Clean up batch dataframes
-                        del all_dataframes
-                        gc.collect()
-                        
-                        print(f"   ✅ Loaded full dataset: {len(df_combined):,} samples")
+                                # Last resort: Load only first 50 files to avoid OOM
+                                subset_paths = parquet_paths[:50]
+                                dataset = Dataset.from_parquet(subset_paths)
+                                print(f"   ⚠️  Loaded subset only: {len(dataset):,} samples (50 files)")
+                                return dataset
                         
                     elif chunk_size == 1:
                         # Single file approach (ultra-safe)
                         single_file = parquet_files[0]
                         print(f"   📂 Loading single file: {single_file.name}")
                         
-                        df_combined = pd.read_parquet(single_file)
-                        print(f"   ✅ Loaded single file: {len(df_combined):,} samples")
-                        
-                    else:
-                        # Multi-file approach (memory-conscious)
-                        chunk_files = parquet_files[:chunk_size]
-                        dataframes = []
-                        print(f"   📂 Loading {len(chunk_files)} files...")
-                        
-                        for i, parquet_file in enumerate(chunk_files):
-                            print(f"      📄 File {i+1}/{len(chunk_files)}: {parquet_file.name}")
-                            df = pd.read_parquet(parquet_file)
-                            dataframes.append(df)
-                        
-                        print(f"   🔄 Combining {len(dataframes)} dataframes...")
-                        df_combined = pd.concat(dataframes, ignore_index=True)
-                        
-                        # Free individual dataframes immediately
-                        del dataframes
-                        gc.collect()
-                        
-                        print(f"   ✅ Loaded combined files: {len(df_combined):,} samples")
-                    
-                    # Convert to HuggingFace Dataset (memory-safe)
-                    print(f"   🔄 Converting to HuggingFace Dataset...")
-                    try:
-                        dataset = Dataset.from_pandas(df_combined)
-                        
-                        # Free pandas DataFrame immediately
-                        del df_combined
-                        gc.collect()
-                        
-                        print(f"   🎉 Successfully loaded {len(dataset):,} samples")
-                        return dataset
-                        
-                    except Exception as conversion_error:
-                        print(f"   ❌ Dataset conversion failed: {conversion_error}")
-                        print(f"   🔄 Trying with smaller subset...")
-                        
-                        # Try with half the data if conversion fails
                         try:
-                            half_df = df_combined.sample(n=len(df_combined)//2, random_state=42)
+                            # Try HuggingFace native loading first
+                            dataset = Dataset.from_parquet(str(single_file))
+                            print(f"   ✅ Successfully loaded single file: {len(dataset):,} samples (HF native)")
+                            return dataset
+                            
+                        except Exception as hf_error:
+                            print(f"   ❌ HuggingFace loading failed: {hf_error}")
+                            print(f"   🔄 Falling back to pandas for single file...")
+                            
+                            # Fallback to pandas
+                            df_combined = pd.read_parquet(single_file)
+                            print(f"   ✅ Loaded single file: {len(df_combined):,} samples")
+                            
+                            # Convert to HuggingFace Dataset
+                            print(f"   🔄 Converting to HuggingFace Dataset...")
+                            dataset = Dataset.from_pandas(df_combined)
                             del df_combined
                             gc.collect()
                             
-                            dataset = Dataset.from_pandas(half_df)
-                            del half_df
-                            gc.collect()
-                            
-                            print(f"   ✅ Converted smaller subset: {len(dataset):,} samples")
+                            print(f"   🎉 Successfully converted: {len(dataset):,} samples")
+                            return dataset
+                        
+                    else:
+                        # Smaller dataset - use HuggingFace native loading (still memory efficient)
+                        chunk_files = parquet_files[:chunk_size]
+                        chunk_paths = [str(f) for f in chunk_files]
+                        
+                        print(f"   📂 Loading {len(chunk_files)} files with HuggingFace native loading...")
+                        
+                        try:
+                            # Use HuggingFace native loading even for smaller datasets
+                            dataset = Dataset.from_parquet(chunk_paths)
+                            print(f"   ✅ Successfully loaded {len(dataset):,} samples (memory efficient)")
                             return dataset
                             
-                        except Exception as half_error:
-                            print(f"   ❌ Even half-size conversion failed: {half_error}")
-                            del df_combined  # Clean up if still exists
-                            gc.collect()
-                            return None
+                        except Exception as hf_error:
+                            print(f"   ❌ HuggingFace loading failed: {hf_error}")
+                            print(f"   🔄 Falling back to pandas approach for small dataset...")
+                            
+                            # Fallback to pandas for very small datasets
+                            dataframes = []
+                            for i, parquet_file in enumerate(chunk_files):
+                                print(f"      📄 File {i+1}/{len(chunk_files)}: {parquet_file.name}")
+                                df = pd.read_parquet(parquet_file)
+                                dataframes.append(df)
+                            
+                            if dataframes:
+                                print(f"   🔄 Combining {len(dataframes)} dataframes...")
+                                df_combined = pd.concat(dataframes, ignore_index=True)
+                                
+                                # Free individual dataframes immediately
+                                del dataframes
+                                gc.collect()
+                                
+                                print(f"   ✅ Loaded combined files: {len(df_combined):,} samples")
+                                
+                                # Convert to HuggingFace Dataset
+                                print(f"   🔄 Converting to HuggingFace Dataset...")
+                                dataset = Dataset.from_pandas(df_combined)
+                                del df_combined
+                                gc.collect()
+                                
+                                print(f"   🎉 Successfully converted: {len(dataset):,} samples")
+                                return dataset
+                            else:
+                                return None
                         
                 except Exception as chunk_error:
                     print(f"   ❌ Optimized chunked loading failed: {chunk_error}")
