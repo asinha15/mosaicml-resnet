@@ -124,15 +124,15 @@ echo "🎯 Using configuration: $CONFIG_NAME"
 # Set training parameters based on config
 case $CONFIG_NAME in
     "aws_g4dn_validation_config")
-        echo "📊 1-Hour Validation Configuration (Memory-Safe)"
+        echo "📊 1-Hour Validation Configuration (GPU-Optimized)"
         ARGS="--model-type torchvision \
               --data-subset 20000 \
-              --batch-size 64 \
+              --batch-size 256 \
               --image-size 224 \
-              --num-workers 4 \
+              --num-workers 8 \
               --use-hf \
               --epochs 12 \
-              --lr 0.1 \
+              --lr 0.4 \
               --weight-decay 1e-4 \
               --momentum 0.9 \
               --optimizer sgd \
@@ -143,11 +143,39 @@ case $CONFIG_NAME in
               --use-ema \
               --use-channels-last \
               --use-blurpool \
+              --compile-model \
               --device auto \
               --precision amp_fp16 \
               --save-interval 2ep \
               --wandb-project mosaic-resnet50-phase2-validation \
               --log-interval 50ba"
+        ;;
+    "aws_a10g_max_config")
+        echo "🚀 A10G Maximum Utilization Configuration (23GB GPU)"
+        ARGS="--model-type torchvision \
+              --data-subset 50000 \
+              --batch-size 384 \
+              --image-size 224 \
+              --num-workers 12 \
+              --use-hf \
+              --epochs 8 \
+              --lr 0.6 \
+              --weight-decay 1e-4 \
+              --momentum 0.9 \
+              --optimizer sgd \
+              --use-mixup \
+              --use-cutmix \
+              --use-randaugment \
+              --use-label-smoothing \
+              --use-ema \
+              --use-channels-last \
+              --use-blurpool \
+              --compile-model \
+              --device auto \
+              --precision amp_fp16 \
+              --save-interval 2ep \
+              --wandb-project mosaic-resnet50-phase2-validation-max \
+              --log-interval 25ba"
         ;;
     "aws_g4dn_12xl_ddp_config")
         echo "📊 Full Training Configuration (4x T4, Local HF Cache)"
@@ -200,7 +228,7 @@ case $CONFIG_NAME in
         ;;
     *)
         echo "❌ Unknown configuration: $CONFIG_NAME"
-        echo "Available configs: aws_g4dn_validation_config, aws_g4dn_12xl_ddp_config, colab_config"
+        echo "Available configs: aws_g4dn_validation_config, aws_a10g_max_config, aws_g4dn_12xl_ddp_config, colab_config"
         exit 1
         ;;
 esac
@@ -376,12 +404,14 @@ Quick Start Commands:
    ./start_training.sh [config_name]
 
 Available Configurations:
-- aws_g4dn_validation_config  (1-hour test, 20K samples, 12 epochs)
+- aws_g4dn_validation_config  (1-hour test, 20K samples, optimized)
+- aws_a10g_max_config        (max GPU utilization, 50K samples)
 - aws_g4dn_12xl_ddp_config   (full training, 4x GPU)
 - colab_config               (tiny test, 1K samples)
 
 Examples:
-   ./start_training.sh aws_g4dn_validation_config  # 1-hour validation
+   ./start_training.sh aws_g4dn_validation_config  # 1-hour validation (optimized)
+   ./start_training.sh aws_a10g_max_config         # maximum GPU utilization
    ./start_training.sh aws_g4dn_12xl_ddp_config    # full training
 
 Environment Details:
