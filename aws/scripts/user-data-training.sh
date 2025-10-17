@@ -121,14 +121,14 @@ echo "🎯 Using configuration: $CONFIG_NAME"
 # Set training parameters based on config
 case $CONFIG_NAME in
     "aws_g4dn_validation_config")
-        echo "📊 Memory-Safe Validation Configuration (Local HF Cache)"
+        echo "📊 Optimized Validation Configuration (30GB RAM + Local Cache)"
         ARGS="--model-type torchvision \
-              --data-subset 5000 \
-              --batch-size 64 \
+              --data-subset 20000 \
+              --batch-size 128 \
               --image-size 224 \
-              --num-workers 2 \
+              --num-workers 8 \
               --use-hf \
-              --epochs 3 \
+              --epochs 5 \
               --lr 0.05 \
               --weight-decay 1e-4 \
               --momentum 0.9 \

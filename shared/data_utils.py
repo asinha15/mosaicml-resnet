@@ -108,99 +108,68 @@ def load_cached_imagenet_dataset(cache_path: str, split: str = 'train') -> Optio
         if parquet_files:
             print(f"   📊 Found {len(parquet_files)} parquet files, loading with memory optimization...")
             
-            # For large numbers of parquet files, use datasets library directly
+            # For large numbers of parquet files, use optimized chunked loading
             if len(parquet_files) > 50:
-                print(f"   🔄 Large dataset detected ({len(parquet_files)} files), using streaming approach...")
+                print(f"   🔄 Large dataset detected ({len(parquet_files)} files)")
+                print(f"   🔧 Using optimized chunked approach (reliable method)")
+                
+                # With 30GB+ available memory, we can use larger chunks
+                # Get sample info from first file to determine optimal chunk size
+                sample_file = parquet_files[0]
+                print(f"   📊 Analyzing sample file: {sample_file.name}")
                 
                 try:
-                    # Use datasets library to load parquet files efficiently
-                    from datasets import Dataset
+                    df_sample = pd.read_parquet(sample_file)
+                    sample_count = len(df_sample)
+                    columns = df_sample.columns.tolist()
+                    memory_usage = df_sample.memory_usage(deep=True).sum() / (1024**2)  # MB
                     
-                    # Load parquet files as a dataset (more memory efficient)
-                    dataset = Dataset.from_parquet([str(f) for f in parquet_files])
-                    print(f"   ✅ Efficiently loaded {len(dataset)} samples from {len(parquet_files)} parquet files")
-                    return dataset
+                    print(f"   📊 Sample file: {sample_count:,} samples, {memory_usage:.1f} MB")
                     
-                except Exception as e:
-                    print(f"   ⚠️  Efficient loading failed ({e}), trying chunked approach...")
+                    # With plenty of memory available, use larger chunks for efficiency
+                    if memory_usage < 10:  # Very small files
+                        chunk_size = 50  # Load many files
+                    elif memory_usage < 50:  # Small files  
+                        chunk_size = 20  # Load moderate number
+                    else:  # Larger files
+                        chunk_size = 10  # Load fewer files
                     
-                    # Ultra-conservative fallback: Load minimal files for memory-constrained systems
-                    print(f"   🔄 Using ultra-conservative memory approach (loading minimal files)...")
+                    print(f"   🔧 Using optimized chunk size: {chunk_size} files (memory efficient)")
                     
-                    # Get sample info from just first file
-                    sample_file = parquet_files[0]
-                    print(f"   📊 Analyzing sample file: {sample_file.name}")
+                    # Load optimized chunk
+                    chunk_files = parquet_files[:chunk_size]
+                    dataframes = []
                     
-                    try:
-                        df_sample = pd.read_parquet(sample_file)
-                        sample_count = len(df_sample)
-                        columns = df_sample.columns.tolist()
-                        print(f"   📊 Sample file has {sample_count:,} samples, columns: {columns}")
+                    for i, parquet_file in enumerate(chunk_files):
+                        print(f"   📂 Loading file {i+1}/{len(chunk_files)}: {parquet_file.name}")
+                        df = pd.read_parquet(parquet_file)
+                        dataframes.append(df)
                         
-                        # Check memory usage of one file
-                        memory_usage = df_sample.memory_usage(deep=True).sum() / (1024**2)  # MB
-                        print(f"   💾 Memory usage per file: ~{memory_usage:.1f} MB")
+                        # Clean up sample file memory
+                        if i == 0:
+                            del df_sample
+                    
+                    if dataframes:
+                        print(f"   🔄 Combining {len(dataframes)} dataframes...")
+                        combined_df = pd.concat(dataframes, ignore_index=True)
+                        print(f"   ✅ Loaded optimized chunk: {len(combined_df):,} samples")
                         
-                        # Determine safe chunk size based on memory usage per file
-                        # Use very conservative approach for memory-constrained systems
-                        if memory_usage > 500:  # If one file uses >500MB
-                            safe_chunk_size = 1  # Load only one file at a time
-                        elif memory_usage > 200:  # If one file uses >200MB  
-                            safe_chunk_size = 2  # Load 2 files max
-                        else:
-                            safe_chunk_size = 3  # Load up to 3 files for smaller files
+                        # Free individual dataframes
+                        del dataframes
                         
-                        print(f"   🔧 Memory per file: {memory_usage:.1f}MB → safe chunk size: {safe_chunk_size}")
+                        # Convert to HuggingFace Dataset
+                        print(f"   🔄 Converting to HuggingFace Dataset...")
+                        dataset = Dataset.from_pandas(combined_df)
                         
-                        # Load conservative chunk
-                        chunk_files = parquet_files[:safe_chunk_size]
-                        dataframes = []
+                        # Free pandas DataFrame
+                        del combined_df
                         
-                        for i, parquet_file in enumerate(chunk_files):
-                            print(f"   📂 Loading file {i+1}/{len(chunk_files)}: {parquet_file.name}")
-                            df = pd.read_parquet(parquet_file)
-                            dataframes.append(df)
-                            
-                            # Free memory of sample file if it's the first one
-                            if i == 0:
-                                del df_sample
+                        print(f"   🎉 Successfully loaded {len(dataset):,} samples for training")
+                        return dataset
                         
-                        if dataframes:
-                            print(f"   🔄 Combining {len(dataframes)} dataframes...")
-                            combined_df = pd.concat(dataframes, ignore_index=True)
-                            print(f"   ✅ Loaded conservative chunk: {len(combined_df):,} samples")
-                            
-                            # Free individual dataframes
-                            del dataframes
-                            
-                            # Convert to HuggingFace Dataset
-                            print(f"   🔄 Converting to HuggingFace Dataset...")
-                            dataset = Dataset.from_pandas(combined_df)
-                            
-                            # Free the pandas DataFrame
-                            del combined_df
-                            
-                            print(f"   💡 Using conservative chunk for training ({len(dataset):,} samples)")
-                            return dataset
-                        
-                    except Exception as chunk_error:
-                        print(f"   ❌ Conservative chunked loading failed: {chunk_error}")
-                        
-                        # Last resort: single file only
-                        print(f"   🔄 Falling back to single file loading...")
-                        try:
-                            df_single = pd.read_parquet(parquet_files[0])
-                            print(f"   ✅ Loaded single file: {len(df_single):,} samples")
-                            
-                            dataset = Dataset.from_pandas(df_single)
-                            del df_single
-                            
-                            print(f"   💡 Using single file for training (memory safe)")
-                            return dataset
-                            
-                        except Exception as single_error:
-                            print(f"   ❌ Single file loading failed: {single_error}")
-                            return None
+                except Exception as chunk_error:
+                    print(f"   ❌ Optimized chunked loading failed: {chunk_error}")
+                    print(f"   🔄 Falling back to basic approach...")
             else:
                 # Small number of files - load normally
                 print(f"   🔄 Loading {len(parquet_files)} parquet files...")
