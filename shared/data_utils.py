@@ -509,13 +509,46 @@ class ImageNetHF(VisionDataset):
         else:
             item = self.dataset[idx]
         
-        # Process image
-        image = item['image']
-        if not isinstance(image, Image.Image):
-            image = Image.fromarray(image)
+        # Process image - handle different formats from HuggingFace cache
+        image_data = item['image']
+        
+        if isinstance(image_data, Image.Image):
+            # Already a PIL Image
+            image = image_data
+        elif isinstance(image_data, dict):
+            # Dictionary format from HuggingFace cache
+            if 'bytes' in image_data and image_data['bytes'] is not None:
+                # Raw image bytes
+                import io
+                image = Image.open(io.BytesIO(image_data['bytes']))
+            elif 'path' in image_data and image_data['path'] is not None:
+                # File path
+                image = Image.open(image_data['path'])
+            else:
+                # Try to find any key that might contain image data
+                for key, value in image_data.items():
+                    if isinstance(value, bytes) and len(value) > 100:  # Likely image bytes
+                        import io
+                        try:
+                            image = Image.open(io.BytesIO(value))
+                            break
+                        except:
+                            continue
+                else:
+                    raise ValueError(f"Unable to decode image from dictionary: {list(image_data.keys())}")
+        else:
+            # Numpy array or other format
+            try:
+                import numpy as np
+                if hasattr(image_data, '__array__') or isinstance(image_data, np.ndarray):
+                    image = Image.fromarray(image_data)
+                else:
+                    raise ValueError(f"Unsupported image format: {type(image_data)}")
+            except Exception as e:
+                raise ValueError(f"Failed to convert image data of type {type(image_data)}: {e}")
         
         # Ensure image is RGB (convert grayscale to RGB if needed)
-        if image.mode != 'RGB':
+        if hasattr(image, 'mode') and image.mode != 'RGB':
             image = image.convert('RGB')
         
         if self.transform:
