@@ -126,13 +126,14 @@ def load_cached_imagenet_dataset(cache_path: str, split: str = 'train') -> Optio
                     
                     print(f"   📊 Sample file: {sample_count:,} samples, {memory_usage:.1f} MB")
                     
-                    # With plenty of memory available, use larger chunks for efficiency
-                    if memory_usage < 10:  # Very small files
-                        chunk_size = 50  # Load many files
-                    elif memory_usage < 50:  # Small files  
-                        chunk_size = 20  # Load moderate number
+                    # Conservative chunk sizes to avoid memory issues during conversion
+                    # The parquet files are small, but images decode to much larger size
+                    if memory_usage < 5:  # Very small files
+                        chunk_size = 8   # Load reasonable number
+                    elif memory_usage < 20:  # Small files  
+                        chunk_size = 5   # Load moderate number
                     else:  # Larger files
-                        chunk_size = 10  # Load fewer files
+                        chunk_size = 3   # Load fewer files
                     
                     print(f"   🔧 Using optimized chunk size: {chunk_size} files (memory efficient)")
                     
@@ -154,18 +155,40 @@ def load_cached_imagenet_dataset(cache_path: str, split: str = 'train') -> Optio
                         combined_df = pd.concat(dataframes, ignore_index=True)
                         print(f"   ✅ Loaded optimized chunk: {len(combined_df):,} samples")
                         
-                        # Free individual dataframes
+                        # Free individual dataframes immediately
                         del dataframes
                         
-                        # Convert to HuggingFace Dataset
-                        print(f"   🔄 Converting to HuggingFace Dataset...")
-                        dataset = Dataset.from_pandas(combined_df)
+                        # Force garbage collection to free memory
+                        import gc
+                        gc.collect()
                         
-                        # Free pandas DataFrame
-                        del combined_df
-                        
-                        print(f"   🎉 Successfully loaded {len(dataset):,} samples for training")
-                        return dataset
+                        # Convert to HuggingFace Dataset with memory monitoring
+                        print(f"   🔄 Converting to HuggingFace Dataset (memory-aware)...")
+                        try:
+                            dataset = Dataset.from_pandas(combined_df)
+                            
+                            # Free pandas DataFrame immediately after conversion
+                            del combined_df
+                            gc.collect()  # Force cleanup
+                            
+                            print(f"   🎉 Successfully loaded {len(dataset):,} samples for training")
+                            return dataset
+                            
+                        except Exception as conversion_error:
+                            print(f"   ❌ Dataset conversion failed: {conversion_error}")
+                            print(f"   🔄 Trying smaller subset to avoid memory issues...")
+                            
+                            # Try with just half the data if conversion fails
+                            smaller_df = combined_df.sample(n=len(combined_df)//2, random_state=42)
+                            del combined_df
+                            gc.collect()
+                            
+                            dataset = Dataset.from_pandas(smaller_df)
+                            del smaller_df
+                            gc.collect()
+                            
+                            print(f"   ✅ Converted smaller subset: {len(dataset):,} samples")
+                            return dataset
                         
                 except Exception as chunk_error:
                     print(f"   ❌ Optimized chunked loading failed: {chunk_error}")
